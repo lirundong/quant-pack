@@ -1,0 +1,17 @@
+.idea/
+.vscode/
+
+# archives
+*.zip
+*.tar
+*.gz
+
+# data
+[Dd]ataset/
+[Cc]heckpoints*/
+*.pth
+*.log
+
+# cache
+__pycache__
+*.pyc
