@@ -76,7 +76,8 @@ def main():
 
     if "resume_path" in conf:
         checkpoint = torch.load(conf.resume_path, device)
-        model.load_state_dict(checkpoint["model"])
+        model.load_state_dict(checkpoint["model"], strict=False)
+        model.reset_p()
         if "resume_opt" in conf and conf.resume_opt:
             optimizer.load_state_dict(checkpoint["opt"])
             best_accuracy = checkpoint["accuracy"]

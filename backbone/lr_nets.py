@@ -28,7 +28,7 @@ class TernaryConv2d(nn.Conv2d):
         self.quant = quant
         self.p_max = p_max
         self.p_min = p_min
-        self.w_candidate = torch.tensor([-1., 0., 1.])
+        self.register_buffer("w_candidate", torch.tensor([-1., 0., 1.]))
         self.p_a = Parameter(torch.zeros_like(self.weight))
         self.p_b = Parameter(torch.zeros_like(self.weight))
         self.reset_p()
@@ -46,20 +46,17 @@ class TernaryConv2d(nn.Conv2d):
             p_w_pos = p_b * (1. - p_w_0)
             p_w_neg = (1. - p_b) * (1. - p_w_0)
             p = torch.stack([p_w_neg, p_w_0, p_w_pos], dim=-1)
-            m = Multinomial(probs=p)
             if self.training:
-                # c \in [-1, 0, 1]
-                # mean = \sum_i c_i * mean(p_i)
-                # var = \sum_i c_i^2 * var(p_i)
-                w_mean = (m.mean * self.w_candidate).sum(dim=-1)
-                w_var = (m.variance * self.w_candidate.pow(2)).sum(dim=-1)
+                w_mean = (p * self.w_candidate).sum(dim=-1)
+                w_var = (p * self.w_candidate.pow(2)).sum(dim=-1) - w_mean.pow(2)
                 act_mean = F.conv2d(input, w_mean, self.bias, self.stride,
                                     self.padding, self.dilation, self.groups)
                 act_var = F.conv2d(input.pow(2), w_var, self.bias, self.stride,
                                    self.padding, self.dilation, self.groups)
                 eps = torch.randn_like(act_mean)
-                y = act_mean + eps * act_var
+                y = act_mean + eps * act_var.sqrt()
             else:
+                m = Multinomial(probs=p)
                 indices = m.sample().argmax(dim=-1)
                 w = self.w_candidate[indices]
                 y = F.conv2d(input, w, self.bias, self.stride,
@@ -150,3 +147,11 @@ class LR_CIFAR10(nn.Module):
         for m in self.modules():
             if isinstance(m, TernaryConv2d):
                 m.quant = enable
+
+    def full_precision(self):
+        self.quant(False)
+
+    def reset_p(self):
+        for m in self.modules():
+            if isinstance(m, TernaryConv2d):
+                m.reset_p()
