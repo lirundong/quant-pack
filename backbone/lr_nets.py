@@ -28,10 +28,17 @@ class TernaryConv2d(nn.Conv2d):
         self.quant = quant
         self.p_max = p_max
         self.p_min = p_min
+        self.eps = 1e-5
         self.register_buffer("w_candidate", torch.tensor([-1., 0., 1.]))
         self.p_a = Parameter(torch.zeros_like(self.weight))
         self.p_b = Parameter(torch.zeros_like(self.weight))
         self.reset_p()
+
+        # visualization for analysis
+        self.vis = False
+        self.name = None
+        self.iter = -1
+        self.tb_logger = None
 
     def reset_p(self):
         w = self.weight.data / self.weight.data.std()
@@ -51,16 +58,87 @@ class TernaryConv2d(nn.Conv2d):
                 w_var = (p * self.w_candidate.pow(2)).sum(dim=-1) - w_mean.pow(2)
                 act_mean = F.conv2d(input, w_mean, self.bias, self.stride,
                                     self.padding, self.dilation, self.groups)
-                act_var = F.conv2d(input.pow(2), w_var, self.bias, self.stride,
+                act_var = F.conv2d(input.pow(2), w_var, None, self.stride,
                                    self.padding, self.dilation, self.groups)
-                eps = torch.randn_like(act_mean)
-                y = act_mean + eps * act_var.sqrt()
+                var_eps = torch.randn_like(act_mean)
+                y = act_mean + var_eps * act_var.add(self.eps).sqrt()
             else:
                 m = Multinomial(probs=p)
                 indices = m.sample().argmax(dim=-1)
                 w = self.w_candidate[indices]
                 y = F.conv2d(input, w, self.bias, self.stride,
                              self.padding, self.dilation, self.groups)
+
+            if self.vis:
+                with torch.no_grad():
+                    y_fp = super().forward(input)
+                    y_err = y - y_fp
+                    self.tb_logger.add_histogram(self.name + "/act_fp", y_fp, self.iter)
+                    self.tb_logger.add_histogram(self.name + "/act_sampled", y, self.iter)
+                    self.tb_logger.add_histogram(self.name + "/act_error", y_err, self.iter)
+                    self.vis = False
+        else:
+            y = super().forward(input)
+
+        return y
+
+
+class TernaryLinear(nn.Linear):
+    """Implementation of `LR-Nets`(https://arxiv.org/abs/1710.07739)."""
+
+    def __init__(self, in_features, out_features, bias=True, quant=False,
+                 p_max=0.95, p_min=0.05):
+        super().__init__(in_features, out_features, bias)
+
+        self.quant = quant
+        self.p_max = p_max
+        self.p_min = p_min
+        self.eps = 1e-5
+        self.register_buffer("w_candidate", torch.tensor([-1., 0., 1.]))
+        self.p_a = Parameter(torch.zeros_like(self.weight))
+        self.p_b = Parameter(torch.zeros_like(self.weight))
+        self.reset_p()
+
+        # visualization for analysis
+        self.vis = False
+        self.name = None
+        self.iter = -1
+        self.tb_logger = None
+
+    def reset_p(self):
+        w = self.weight.data / self.weight.data.std()
+        self.p_a.data = inv_sigmoid(self.p_max - (self.p_max - self.p_min) * w.abs(), self.p_min, self.p_max)
+        self.p_b.data = inv_sigmoid(0.5 * (1. + w / (1. - torch.sigmoid(self.p_a.data))), self.p_min, self.p_max)
+
+    def forward(self, input):
+        if self.quant:
+            p_a = torch.sigmoid(self.p_a)
+            p_b = torch.sigmoid(self.p_b)
+            p_w_0 = p_a
+            p_w_pos = p_b * (1. - p_w_0)
+            p_w_neg = (1. - p_b) * (1. - p_w_0)
+            p = torch.stack([p_w_neg, p_w_0, p_w_pos], dim=-1)
+            if self.training:
+                w_mean = (p * self.w_candidate).sum(dim=-1)
+                w_var = (p * self.w_candidate.pow(2)).sum(dim=-1) - w_mean.pow(2)
+                act_mean = F.linear(input, w_mean, self.bias)
+                act_var = F.linear(input.pow(2), w_var, None)
+                var_eps = torch.randn_like(act_mean)
+                y = act_mean + var_eps * act_var.add(self.eps).sqrt()
+            else:
+                m = Multinomial(probs=p)
+                indices = m.sample().argmax(dim=-1)
+                w = self.w_candidate[indices]
+                y = F.linear(input, w, self.bias)
+
+            if self.vis:
+                with torch.no_grad():
+                    y_fp = super().forward(input)
+                    y_err = y - y_fp
+                    self.tb_logger.add_histogram(self.name + "/act_fp", y_fp, self.iter)
+                    self.tb_logger.add_histogram(self.name + "/act_sampled", y, self.iter)
+                    self.tb_logger.add_histogram(self.name + "/act_error", y_err, self.iter)
+                    self.vis = False
         else:
             y = super().forward(input)
 
@@ -104,7 +182,8 @@ class LR_CIFAR10(nn.Module):
         )
         self.fc = nn.Sequential(
             nn.Dropout(p=0.5),
-            nn.Linear(4 * 4 * 512, 1024),
+            TernaryLinear(4 * 4 * 512, 1024),
+            nn.ReLU(inplace=True),
             nn.Dropout(p=0.5),
             nn.Linear(1024, num_classes),
         )
@@ -125,7 +204,7 @@ class LR_CIFAR10(nn.Module):
         no_decay_group = dict(params=[], **no_decay_conf)
 
         def param_filter(name, module):
-            if isinstance(module, TernaryConv2d) and any(s in name for s in ("weight", "p_a", "p_b")):
+            if isinstance(module, (TernaryConv2d, TernaryLinear)) and any(s in name for s in ("weight", "p_a", "p_b")):
                 if quant:
                     return any(s in name for s in ("p_a", "p_b"))
                 else:
@@ -136,7 +215,7 @@ class LR_CIFAR10(nn.Module):
         for m in self.modules():
             for n, p in m._parameters.items():
                 if param_filter(n, m):
-                    if isinstance(m, nn.Conv2d) and any(s in n for s in ("weight", "p_a", "p_b")):
+                    if isinstance(m, (nn.Conv2d, nn.Linear)) and any(s in n for s in ("weight", "p_a", "p_b")):
                         decay_group["params"].append(p)
                     else:
                         no_decay_group["params"].append(p)
@@ -145,7 +224,7 @@ class LR_CIFAR10(nn.Module):
 
     def quant(self, enable=True):
         for m in self.modules():
-            if isinstance(m, TernaryConv2d):
+            if isinstance(m, (TernaryConv2d, TernaryLinear)):
                 m.quant = enable
 
     def full_precision(self):
@@ -153,5 +232,17 @@ class LR_CIFAR10(nn.Module):
 
     def reset_p(self):
         for m in self.modules():
-            if isinstance(m, TernaryConv2d):
+            if isinstance(m, (TernaryConv2d, TernaryLinear)):
                 m.reset_p()
+
+    def register_vis(self, tb_logger):
+        for n, m in self.named_modules():
+            if isinstance(m, (TernaryConv2d, TernaryLinear)):
+                m.name = n
+                m.tb_logger = tb_logger
+
+    def vis(self, iter):
+        for n, m in self.named_modules():
+            if isinstance(m, (TernaryConv2d, TernaryLinear)):
+                m.iter = iter
+                m.vis = True

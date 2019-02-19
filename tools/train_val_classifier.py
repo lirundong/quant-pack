@@ -2,8 +2,10 @@
 
 import os
 import logging
+import json
 from argparse import ArgumentParser
 from time import time
+from datetime import datetime
 
 import yaml
 import torch
@@ -21,6 +23,7 @@ from utils import *
 
 
 best_accuracy = 0.
+exp_datetime = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 conf = None
 device = None
 tb_logger = None
@@ -40,11 +43,14 @@ def main():
     parser.add_argument("--conf-path", help="path of configuration file")
     parser.add_argument("--evaluate", "-e", action="store_true", help="evaluate trained model")
     parser.add_argument("--quant", "-q", action="store_true", help="evaluate trained model")
-
+    parser.add_argument("--extra", "-x", type=json.loads, help="extra configurations in json format")
     args = parser.parse_args()
+
     with open(args.conf_path, "r", encoding="utf-8") as f:
         conf = yaml.load(f)
         conf.update(vars(args))
+        if args.extra is not None:
+            conf.update(args.extra)
         conf = edict(conf)
 
     device = torch.device(f"cuda:{torch.cuda.current_device()}") if torch.cuda.is_available() else torch.device("cpu")
@@ -77,7 +83,8 @@ def main():
     if "resume_path" in conf:
         checkpoint = torch.load(conf.resume_path, device)
         model.load_state_dict(checkpoint["model"], strict=False)
-        model.reset_p()
+        if "reset_p" in conf and conf.reset_p:
+            model.reset_p()
         if "resume_opt" in conf and conf.resume_opt:
             optimizer.load_state_dict(checkpoint["opt"])
             best_accuracy = checkpoint["accuracy"]
@@ -90,8 +97,10 @@ def main():
         return
 
     if "tb_dir" in conf:
-        os.makedirs(conf.tb_dir, exist_ok=True)
-        tb_logger = SummaryWriter(conf.tb_dir)
+        tb_dir = os.path.join(conf.tb_dir, exp_datetime)
+        os.makedirs(tb_dir, exist_ok=True)
+        tb_logger = SummaryWriter(tb_dir)
+        model.register_vis(tb_logger)
 
     train(model, criterion, train_loader, val_loader, optimizer, scheduler)
 
@@ -107,11 +116,16 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler):
 
     t0 = time()
     for i, (img, label) in enumerate(train_loader):
-        scheduler.step()
         t_data = time() - t0
+        scheduler.step()
+        step = scheduler.last_iter
+
         if i == 0:
             logger.info(f"first data batch time: {t_data:.3f}s")
             logger.info(f"LR milestones: {scheduler.milestones} steps.")
+
+        if conf.quant and "vis_iter" in conf and i % conf.vis_iter == 0:
+            model.vis(step)
 
         img = img.to(device, non_blocking=True)
         label = label.to(device, non_blocking=True)
@@ -126,7 +140,6 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler):
 
         if i % conf.log_iter == 0:
             lr = optimizer.param_groups[0]["lr"]
-            step = scheduler.last_iter
             eta = get_eta(step, len(train_loader), t_iter.avg())
             logger.info(f"[Step {step:6d} / {len(train_loader):6d}]: LR={lr:.5f}, "
                         f"train_accuracy={train_acc.avg():.3f}%, "

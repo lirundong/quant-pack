@@ -14,6 +14,7 @@ eval_iter: 1000
 val_data_conf:
   batch_size: *n
   shuffle: false
+  pin_memory: true
   num_workers: 2
 
 # models
@@ -36,12 +37,14 @@ scheduler_conf:
 
 # checkpoint
 save_iter: 1000000
-checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10_TERNARY/checkpoints
+checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10_TERNARY_ALL/checkpoints
 
 # logging
-log_iter: 500  # disable logging on training
-tb_dir: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10_TERNARY/tb_logs
+log_iter: 500
+vis_iter: 1000
+tb_dir: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10_TERNARY_ALL/tb_logs
 
 # resume
-resume_path: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10_TERNARY/checkpoints/checkpoint_final_best.pth
-resume_opt: false
+resume_path: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10_TERNARY_ALL/checkpoints/checkpoint_final_best.pth
+resume_opt: true
+reset_p: false
