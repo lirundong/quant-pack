@@ -1,0 +1,55 @@
+# dataset
+data_dir: /mnt/lustre/lirundong/Data/Datasets/CIFAR
+train_data_conf:
+  batch_size: &n 256
+  shuffle: false
+  pin_memory: true
+  num_workers: 2
+train_samper_conf:
+  batch_size: *n
+  total_epoch: &e 290
+
+# validation setting
+eval_iter: 1000
+eval_vis: true
+val_data_conf:
+  batch_size: *n
+  shuffle: false
+  pin_memory: true
+  num_workers: 2
+
+# models
+arch: cifar10_quant_ste
+arch_conf:
+  num_classes: 10
+  bit_width: 4
+  denoise: false
+
+# optimizers
+opt: Adam
+opt_prob: false
+denoise_only: false
+opt_conf:
+  lr: !!float 1e-2
+  weight_decay: !!float 1e-11
+
+# scheduler
+epochs: *e
+scheduler_conf:
+  milestones: [170]
+  gamma: 0.1
+  batch_size: *n
+
+# checkpoint
+save_iter: 1000000
+checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_4bits/checkpoints
+
+# logging
+log_iter: 500
+vis_iter: 1000
+tb_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_4bits/tb_logs
+
+# resume
+resume_path: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10/checkpoints/checkpoint_final_best.pth
+resume_opt: false
+reset_p: false

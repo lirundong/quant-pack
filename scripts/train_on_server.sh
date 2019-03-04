@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 
-while getopts :p:qc:x: opt
+while getopts :p:qc:x:m: opt
 do
     case "$opt" in
     p) PART=$OPTARG ;;
     q) EXTRA="${EXTRA} --quant";;
     c) CONF_NAME=$OPTARG;;
     x) EXTRA="${EXTRA} --extra ${OPTARG}";;
+    m) EXTRA="${EXTRA} --comment ${OPTARG}";;
     esac
 done
 

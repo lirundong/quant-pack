@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import logging
 from collections import OrderedDict
 from copy import deepcopy
 from collections import deque
@@ -9,7 +10,22 @@ import torch
 import numpy as np
 
 
-__all__ = ["accuracy", "map_to_cpu", "get_eta", "AverageMeter"]
+__all__ = ["init_log", "accuracy", "map_to_cpu", "get_eta", "AverageMeter"]
+
+
+def init_log(debug=False):
+    level = logging.DEBUG if debug else logging.INFO
+    log_fmt = f"%(asctime)s-%(filename)s#%(lineno)d: [%(levelname)s] %(message)s"
+    date_fmt = "%Y-%m-%d_%H:%M:%S"
+    fmt = logging.Formatter(log_fmt, date_fmt)
+    ch = logging.StreamHandler()
+    ch.setLevel(level)
+    ch.setFormatter(fmt)
+    logger = logging.getLogger("global")
+    logger.setLevel(level)
+    logger.addHandler(ch)
+
+    return logger
 
 
 def accuracy(output, target):

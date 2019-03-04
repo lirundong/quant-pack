@@ -32,18 +32,13 @@ tb_logger = None
 def main():
     global best_accuracy, conf, device, tb_logger
 
-    level = logging.INFO
-    logger = logging.getLogger("global")
-    logger.setLevel(level)
-    ch = logging.StreamHandler()
-    ch.setLevel(level)
-    logger.addHandler(ch)
-
     parser = ArgumentParser(f"Probabilistic quantization neural networks.")
     parser.add_argument("--conf-path", help="path of configuration file")
     parser.add_argument("--evaluate", "-e", action="store_true", help="evaluate trained model")
     parser.add_argument("--quant", "-q", action="store_true", help="evaluate trained model")
     parser.add_argument("--extra", "-x", type=json.loads, help="extra configurations in json format")
+    parser.add_argument("--comment", "-m", help="comment for each experiment")
+    parser.add_argument("--debug", action="store_true", help="logging debug info")
     args = parser.parse_args()
 
     with open(args.conf_path, "r", encoding="utf-8") as f:
@@ -53,6 +48,7 @@ def main():
             conf.update(args.extra)
         conf = edict(conf)
 
+    logger = init_log(conf.debug)
     device = torch.device(f"cuda:{torch.cuda.current_device()}") if torch.cuda.is_available() else torch.device("cpu")
 
     dataset = CIFAR100Sub if "cifar100" in conf and conf.cifar100 else CIFAR10
@@ -76,7 +72,7 @@ def main():
     model = backbone.__dict__[conf.arch](**conf.arch_conf).to(device, non_blocking=True)
     model.quant(conf.quant)
     criterion = nn.CrossEntropyLoss().to(device, non_blocking=True)
-    optimizer = optim.__dict__[conf.opt](model.opt_param_groups(conf.quant, **conf.opt_conf),
+    optimizer = optim.__dict__[conf.opt](model.opt_param_groups(conf.opt_prob, conf.denoise_only, **conf.opt_conf),
                                          **conf.opt_conf)
     scheduler = IterationScheduler(optimizer, dataset_size=len(train_set), **conf.scheduler_conf)
 
@@ -90,17 +86,18 @@ def main():
             best_accuracy = checkpoint["accuracy"]
             scheduler.load_state_dict(checkpoint["scheduler"])
 
-    if conf.evaluate:
-        assert conf.resume_path is not None, f"load state_dict before evaluating"
-        accuracy = evaluate(model, val_loader)
-        logger.info(f"[Step {scheduler.last_iter}]: accuracy {accuracy:.3f}%.")
-        return
-
     if "tb_dir" in conf:
-        tb_dir = os.path.join(conf.tb_dir, exp_datetime)
+        tb_dir = os.path.join(conf.tb_dir, f"{exp_datetime}_{conf.comment}")
         os.makedirs(tb_dir, exist_ok=True)
         tb_logger = SummaryWriter(tb_dir)
         model.register_vis(tb_logger)
+
+    if conf.evaluate:
+        assert conf.resume_path is not None, f"load state_dict before evaluating"
+        step = scheduler.last_iter
+        accuracy = evaluate(model, val_loader, step)
+        logger.info(f"[Step {step}]: accuracy {accuracy:.3f}%.")
+        return
 
     train(model, criterion, train_loader, val_loader, optimizer, scheduler)
 
@@ -131,7 +128,7 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler):
         label = label.to(device, non_blocking=True)
         logits = model(img)
         loss = criterion(logits, label)
-        optimizer.zero_grad()
+        model.zero_grad()
         loss.backward()
         optimizer.step()
 
@@ -141,7 +138,7 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler):
         if i % conf.log_iter == 0:
             lr = optimizer.param_groups[0]["lr"]
             eta = get_eta(step, len(train_loader), t_iter.avg())
-            logger.info(f"[Step {step:6d} / {len(train_loader):6d}]: LR={lr:.5f}, "
+            logger.info(f"[Step {i:6d} / {len(train_loader):6d}]: LR={lr:.5f}, "
                         f"train_accuracy={train_acc.avg():.3f}%, "
                         f"iter_time={t_iter.avg():.3f}s, "
                         f"data_time={t_data:.3f}, ETA={eta}")
@@ -151,7 +148,7 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler):
                 tb_logger.add_scalar("train/learning_rate", lr, step)
 
         if i % conf.eval_iter == 0:
-            eval_acc = evaluate(model, val_loader)
+            eval_acc = evaluate(model, val_loader, step)
             logger.info(f"[Step {i:6d}]: val_accuracy={eval_acc:.3f}%")
             if tb_logger is not None:
                 tb_logger.add_scalar("evaluate/accuracy", eval_acc, scheduler.last_iter)
@@ -181,11 +178,16 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler):
     logger.info(f"Training done at step {scheduler.last_iter}, with best accuracy {best_accuracy:.3f}%.")
 
 
-def evaluate(model, loader):
+def evaluate(model, loader, step):
     model.eval()
     acc = 0.
+
     with torch.no_grad():
         for i, (img, label) in enumerate(loader):
+
+            if "eval_vis" in conf and conf.eval_vis and i % 10 == 0:
+                model.vis(step * len(loader) + i)
+
             img = img.to(device, non_blocking=True)
             label = label.to(device, non_blocking=True)
             logitis = model(img)

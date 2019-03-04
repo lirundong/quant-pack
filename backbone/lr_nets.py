@@ -4,185 +4,55 @@ from copy import copy
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn import Parameter
-from torch.distributions import Multinomial
 
-__all__ = ["LR_CIFAR10"]
+from ._components import TernaryConv2d, TernaryLinear, NaiveQuantConv2d, NaiveQuantLinear, \
+    NonLocal
 
+__all__ = ["cifar10_ternary_lr", "cifar10_quant_ste"]
 
-def inv_sigmoid(x, lb, ub):
-    x = torch.clamp(x, lb, ub)
-    return - torch.log(1. / x - 1.)
-
-
-class TernaryConv2d(nn.Conv2d):
-    """Implementation of `LR-Nets`(https://arxiv.org/abs/1710.07739)."""
-
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                 padding=0, dilation=1, groups=1, bias=True, quant=False,
-                 p_max=0.95, p_min=0.05):
-        super().__init__(in_channels, out_channels, kernel_size, stride,
-                         padding, dilation, groups, bias)
-
-        self.quant = quant
-        self.p_max = p_max
-        self.p_min = p_min
-        self.eps = 1e-5
-        self.register_buffer("w_candidate", torch.tensor([-1., 0., 1.]))
-        self.p_a = Parameter(torch.zeros_like(self.weight))
-        self.p_b = Parameter(torch.zeros_like(self.weight))
-        self.reset_p()
-
-        # visualization for analysis
-        self.vis = False
-        self.name = None
-        self.iter = -1
-        self.tb_logger = None
-
-    def reset_p(self):
-        w = self.weight.data / self.weight.data.std()
-        self.p_a.data = inv_sigmoid(self.p_max - (self.p_max - self.p_min) * w.abs(), self.p_min, self.p_max)
-        self.p_b.data = inv_sigmoid(0.5 * (1. + w / (1. - torch.sigmoid(self.p_a.data))), self.p_min, self.p_max)
-
-    def forward(self, input):
-        if self.quant:
-            p_a = torch.sigmoid(self.p_a)
-            p_b = torch.sigmoid(self.p_b)
-            p_w_0 = p_a
-            p_w_pos = p_b * (1. - p_w_0)
-            p_w_neg = (1. - p_b) * (1. - p_w_0)
-            p = torch.stack([p_w_neg, p_w_0, p_w_pos], dim=-1)
-            if self.training:
-                w_mean = (p * self.w_candidate).sum(dim=-1)
-                w_var = (p * self.w_candidate.pow(2)).sum(dim=-1) - w_mean.pow(2)
-                act_mean = F.conv2d(input, w_mean, self.bias, self.stride,
-                                    self.padding, self.dilation, self.groups)
-                act_var = F.conv2d(input.pow(2), w_var, None, self.stride,
-                                   self.padding, self.dilation, self.groups)
-                var_eps = torch.randn_like(act_mean)
-                y = act_mean + var_eps * act_var.add(self.eps).sqrt()
-            else:
-                m = Multinomial(probs=p)
-                indices = m.sample().argmax(dim=-1)
-                w = self.w_candidate[indices]
-                y = F.conv2d(input, w, self.bias, self.stride,
-                             self.padding, self.dilation, self.groups)
-
-            if self.vis:
-                with torch.no_grad():
-                    y_fp = super().forward(input)
-                    y_err = y - y_fp
-                    self.tb_logger.add_histogram(self.name + "/act_fp", y_fp, self.iter)
-                    self.tb_logger.add_histogram(self.name + "/act_sampled", y, self.iter)
-                    self.tb_logger.add_histogram(self.name + "/act_error", y_err, self.iter)
-                    self.vis = False
-        else:
-            y = super().forward(input)
-
-        return y
+quantifiable = (TernaryConv2d, TernaryLinear, NaiveQuantConv2d, NaiveQuantLinear)
+visible = (TernaryConv2d, TernaryLinear, NaiveQuantConv2d, NaiveQuantLinear)
+probabilistic = (TernaryConv2d, TernaryLinear)
+decayable = (nn.Conv2d, nn.Linear)
+param_denoise = (NonLocal, )
 
 
-class TernaryLinear(nn.Linear):
-    """Implementation of `LR-Nets`(https://arxiv.org/abs/1710.07739)."""
+class CIFAR10(nn.Module):
 
-    def __init__(self, in_features, out_features, bias=True, quant=False,
-                 p_max=0.95, p_min=0.05):
-        super().__init__(in_features, out_features, bias)
+    # convolution blocks: num_block, num_channel
+    cfg = [
+        (2, 128),
+        (2, 256),
+        (2, 512),
+    ]
 
-        self.quant = quant
-        self.p_max = p_max
-        self.p_min = p_min
-        self.eps = 1e-5
-        self.register_buffer("w_candidate", torch.tensor([-1., 0., 1.]))
-        self.p_a = Parameter(torch.zeros_like(self.weight))
-        self.p_b = Parameter(torch.zeros_like(self.weight))
-        self.reset_p()
-
-        # visualization for analysis
-        self.vis = False
-        self.name = None
-        self.iter = -1
-        self.tb_logger = None
-
-    def reset_p(self):
-        w = self.weight.data / self.weight.data.std()
-        self.p_a.data = inv_sigmoid(self.p_max - (self.p_max - self.p_min) * w.abs(), self.p_min, self.p_max)
-        self.p_b.data = inv_sigmoid(0.5 * (1. + w / (1. - torch.sigmoid(self.p_a.data))), self.p_min, self.p_max)
-
-    def forward(self, input):
-        if self.quant:
-            p_a = torch.sigmoid(self.p_a)
-            p_b = torch.sigmoid(self.p_b)
-            p_w_0 = p_a
-            p_w_pos = p_b * (1. - p_w_0)
-            p_w_neg = (1. - p_b) * (1. - p_w_0)
-            p = torch.stack([p_w_neg, p_w_0, p_w_pos], dim=-1)
-            if self.training:
-                w_mean = (p * self.w_candidate).sum(dim=-1)
-                w_var = (p * self.w_candidate.pow(2)).sum(dim=-1) - w_mean.pow(2)
-                act_mean = F.linear(input, w_mean, self.bias)
-                act_var = F.linear(input.pow(2), w_var, None)
-                var_eps = torch.randn_like(act_mean)
-                y = act_mean + var_eps * act_var.add(self.eps).sqrt()
-            else:
-                m = Multinomial(probs=p)
-                indices = m.sample().argmax(dim=-1)
-                w = self.w_candidate[indices]
-                y = F.linear(input, w, self.bias)
-
-            if self.vis:
-                with torch.no_grad():
-                    y_fp = super().forward(input)
-                    y_err = y - y_fp
-                    self.tb_logger.add_histogram(self.name + "/act_fp", y_fp, self.iter)
-                    self.tb_logger.add_histogram(self.name + "/act_sampled", y, self.iter)
-                    self.tb_logger.add_histogram(self.name + "/act_error", y_err, self.iter)
-                    self.vis = False
-        else:
-            y = super().forward(input)
-
-        return y
-
-
-class LR_CIFAR10(nn.Module):
-
-    def __init__(self, num_classes=10):
+    def __init__(self, conv_block, fc_block, non_linear, num_classes=10, **kwargs):
         """ (2×128C3)−MP2−(2×256C3)−MP2−(2×512C3)−MP2−1024FC−Softmax """
-        super(LR_CIFAR10, self).__init__()
+        super(CIFAR10, self).__init__()
+        self.conv_block = conv_block
+        self.fc_block = fc_block
+        self.non_linear = non_linear
         self.num_classes = num_classes
 
-        self.features = nn.Sequential(
-            # (2×128C3) − MP2
-            TernaryConv2d(3, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            TernaryConv2d(128, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2, stride=2),
+        conv_blocks = []
+        prev_c = 3
+        for n, c in self.cfg:
+            for i in range(n):
+                conv_blocks += [
+                    self.conv_block(prev_c, c, kernel_size=3, padding=1, bias=False, **kwargs),
+                    nn.BatchNorm2d(c),
+                ]
+                if self.non_linear is nn.ReLU:
+                    conv_blocks.append(self.non_linear(inplace=True))
+                elif self.non_linear is NonLocal:
+                    conv_blocks.append(self.non_linear(c, inplace=True))
+                prev_c = c
+            conv_blocks.append(nn.MaxPool2d(2, stride=2))
 
-            # (2×256C3) − MP2
-            TernaryConv2d(128, 256, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            TernaryConv2d(256, 256, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2, stride=2),
-
-            # (2×512C3) − MP2
-            TernaryConv2d(256, 512, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            TernaryConv2d(512, 512, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2, stride=2),
-        )
+        self.features = nn.Sequential(*conv_blocks)
         self.fc = nn.Sequential(
             nn.Dropout(p=0.5),
-            TernaryLinear(4 * 4 * 512, 1024),
+            self.fc_block(4 * 4 * 512, 1024, **kwargs),
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.5),
             nn.Linear(1024, num_classes),
@@ -197,15 +67,22 @@ class LR_CIFAR10(nn.Module):
 
         return logits
 
-    def opt_param_groups(self, quant=False, **opt_conf):
+    def opt_param_groups(self, opt_prob=False, denoise_only=False, **opt_conf):
         decay_group = dict(params=[], **opt_conf)
         no_decay_conf = copy(opt_conf)
         no_decay_conf['weight_decay'] = 0.
         no_decay_group = dict(params=[], **no_decay_conf)
 
+        if denoise_only:
+            for m in self.modules():
+                if isinstance(m, param_denoise):
+                    for p in m.parameters():
+                        no_decay_group["params"].append(p)
+            return [no_decay_group, ]
+
         def param_filter(name, module):
-            if isinstance(module, (TernaryConv2d, TernaryLinear)) and any(s in name for s in ("weight", "p_a", "p_b")):
-                if quant:
+            if isinstance(module, probabilistic) and any(s in name for s in ("weight", "p_a", "p_b")):
+                if opt_prob:
                     return any(s in name for s in ("p_a", "p_b"))
                 else:
                     return "weight" in name
@@ -215,7 +92,7 @@ class LR_CIFAR10(nn.Module):
         for m in self.modules():
             for n, p in m._parameters.items():
                 if param_filter(n, m):
-                    if isinstance(m, (nn.Conv2d, nn.Linear)) and any(s in n for s in ("weight", "p_a", "p_b")):
+                    if isinstance(m, decayable) and any(s in n for s in ("weight", "p_a", "p_b")):
                         decay_group["params"].append(p)
                     else:
                         no_decay_group["params"].append(p)
@@ -224,7 +101,7 @@ class LR_CIFAR10(nn.Module):
 
     def quant(self, enable=True):
         for m in self.modules():
-            if isinstance(m, (TernaryConv2d, TernaryLinear)):
+            if isinstance(m, quantifiable):
                 m.quant = enable
 
     def full_precision(self):
@@ -232,17 +109,29 @@ class LR_CIFAR10(nn.Module):
 
     def reset_p(self):
         for m in self.modules():
-            if isinstance(m, (TernaryConv2d, TernaryLinear)):
+            if isinstance(m, probabilistic):
                 m.reset_p()
 
     def register_vis(self, tb_logger):
         for n, m in self.named_modules():
-            if isinstance(m, (TernaryConv2d, TernaryLinear)):
+            if isinstance(m, visible):
                 m.name = n
                 m.tb_logger = tb_logger
 
     def vis(self, iter):
         for n, m in self.named_modules():
-            if isinstance(m, (TernaryConv2d, TernaryLinear)):
+            if isinstance(m, visible):
                 m.iter = iter
                 m.vis = True
+
+
+def cifar10_ternary_lr(**kwargs):
+    return CIFAR10(TernaryConv2d, TernaryLinear, **kwargs)
+
+
+def cifar10_quant_ste(denoise=False, **kwargs):
+    if denoise:
+        non_linear = NonLocal
+    else:
+        non_linear = nn.ReLU
+    return CIFAR10(NaiveQuantConv2d, NaiveQuantLinear, non_linear, **kwargs)
