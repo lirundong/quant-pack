@@ -1,7 +1,7 @@
 # dataset
 data_dir: /mnt/lustre/lirundong/Data/Datasets/CIFAR
 train_data_conf:
-  batch_size: &n 256
+  batch_size: &n 1024
   shuffle: false
   pin_memory: true
   num_workers: 2
@@ -53,7 +53,6 @@ resume_path: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10/checkpoints/checkp
 resume_opt: false
 reset_p: false
 
-# comment
+# misc
+update_bn: true
 comment: "ste_2bits"
-distillation: false
-update_bn: false

@@ -23,12 +23,12 @@ arch: cifar10_quant_ste
 arch_conf:
   num_classes: 10
   bit_width: 2
-  denoise: false
+  denoise: true
 
 # optimizers
 opt: Adam
 opt_prob: false
-denoise_only: false
+denoise_only: true
 opt_conf:
   lr: !!float 1e-3
 
@@ -41,12 +41,12 @@ scheduler_conf:
 
 # checkpoint
 save_iter: 1000000
-checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_2bits/checkpoints
+checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_2bits_nonlocal/checkpoints
 
 # logging
 log_iter: 500
 vis_iter: 1000
-tb_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_2bits/tb_logs
+tb_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_2bits_nonlocal/tb_logs
 
 # resume
 resume_path: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10/checkpoints/checkpoint_final_best.pth
@@ -55,5 +55,3 @@ reset_p: false
 
 # comment
 comment: "ste_2bits"
-distillation: false
-update_bn: false

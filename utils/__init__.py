@@ -4,3 +4,4 @@ from .data.sampler import *
 from .data.cifar_subset import *
 from .scheduler import *
 from .training import *
+from .loss import *

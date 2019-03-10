@@ -6,6 +6,8 @@ import json
 from argparse import ArgumentParser
 from time import time
 from datetime import datetime
+from copy import deepcopy
+from pprint import pformat
 
 import yaml
 import torch
@@ -51,7 +53,11 @@ def main():
     logger = init_log(conf.debug)
     device = torch.device(f"cuda:{torch.cuda.current_device()}") if torch.cuda.is_available() else torch.device("cpu")
 
+    logger.debug(f"configurations:\n{pformat(conf)}")
+    logger.debug(f"device: {device}")
+
     dataset = CIFAR100Sub if "cifar100" in conf and conf.cifar100 else CIFAR10
+    logger.debug(f"building dataset {dataset.__name__}...")
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     train_set = dataset(conf.data_dir, train=True, download=True,
                         transform=transforms.Compose([
@@ -68,10 +74,18 @@ def main():
                           normalize,
                       ]))
     val_loader = DataLoader(val_set, **conf.val_data_conf)
+    logger.debug(f"build dataset {dataset.__name__} done")
 
     model = backbone.__dict__[conf.arch](**conf.arch_conf).to(device, non_blocking=True)
     model.quant(conf.quant)
-    criterion = nn.CrossEntropyLoss().to(device, non_blocking=True)
+    if conf.distillation:
+        teacher = deepcopy(model)
+        teacher.full_precision()
+        criterion = KDistLoss(conf.soft_weight, conf.temperature)
+    else:
+        teacher = None
+        criterion = nn.CrossEntropyLoss().to(device, non_blocking=True)
+
     optimizer = optim.__dict__[conf.opt](model.opt_param_groups(conf.opt_prob, conf.denoise_only, **conf.opt_conf),
                                          **conf.opt_conf)
     scheduler = IterationScheduler(optimizer, dataset_size=len(train_set), **conf.scheduler_conf)
@@ -92,17 +106,23 @@ def main():
         tb_logger = SummaryWriter(tb_dir)
         model.register_vis(tb_logger)
 
+    if conf.update_bn:
+        logger.info(f"updating BN statistics by unlabeled data")
+        update_bn_stat(model, train_loader)
+
     if conf.evaluate:
         assert conf.resume_path is not None, f"load state_dict before evaluating"
         step = scheduler.last_iter
+        logger.info(f"[Step {step}]: evaluating...")
         accuracy = evaluate(model, val_loader, step)
         logger.info(f"[Step {step}]: accuracy {accuracy:.3f}%.")
         return
 
-    train(model, criterion, train_loader, val_loader, optimizer, scheduler)
+    train(model, criterion, train_loader, val_loader, optimizer, scheduler, teacher)
 
 
-def train(model, criterion, train_loader, val_loader, optimizer, scheduler):
+def train(model, criterion, train_loader, val_loader, optimizer, scheduler,
+          teacher_model=None):
     global best_accuracy
     logger = logging.getLogger("global")
     best_model = None
@@ -127,7 +147,14 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler):
         img = img.to(device, non_blocking=True)
         label = label.to(device, non_blocking=True)
         logits = model(img)
-        loss = criterion(logits, label)
+
+        if teacher_model is not None:
+            with torch.no_grad():
+                teacher_logits = teacher_model(img)
+            loss = criterion(logits, label, teacher_logits)
+        else:
+            loss = criterion(logits, label)
+
         model.zero_grad()
         loss.backward()
         optimizer.step()

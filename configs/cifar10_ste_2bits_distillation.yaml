@@ -41,19 +41,23 @@ scheduler_conf:
 
 # checkpoint
 save_iter: 1000000
-checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_2bits/checkpoints
+checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_2bits_distillation/checkpoints
 
 # logging
 log_iter: 500
 vis_iter: 1000
-tb_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_2bits/tb_logs
+tb_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_2bits_distillation/tb_logs
 
 # resume
 resume_path: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10/checkpoints/checkpoint_final_best.pth
 resume_opt: false
 reset_p: false
 
-# comment
+# distillation
+distillation: true
+soft_weight: 0.7
+temperature: 2.0
+
+# misc
 comment: "ste_2bits"
-distillation: false
 update_bn: false

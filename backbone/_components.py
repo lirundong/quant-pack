@@ -17,22 +17,36 @@ from torchvision.utils import make_grid
 
 class NonLocal(nn.Module):
 
-    def __init__(self, channels, inplace=False):
+    def __init__(self, channels, inplace=False, softmax=False):
         super().__init__()
         self.channels = channels
         self.inplace = inplace
+        self.softmax = softmax
         self.mapping = nn.Conv2d(channels, channels, kernel_size=1, bias=False)
-        self.mapping.weight.data.zero_()
 
     def forward(self, x):
         n, c, h, w = x.shape
-        numel = n * h * w
         res = x
-        x = x.permute(0, 2, 3, 1).reshape(n, -1, c)  # n, hw, c
-        f = torch.matmul(x, x.permute(0, 2, 1))  # n, hw, hw
-        y = torch.matmul(f, x) / numel  # n, hw, c
-        y = y.reshape(n, h, w, c).permute(0, 3, 1, 2)
-        y = self.mapping(y) + res
+
+        # adapted from: https://github.com/facebookresearch/ImageNet-Adversarial-Training
+        theta, phi, g = x, x, x
+        if c > h * w or self.softmax:
+            f = torch.einsum('niab,nicd->nabcd', (theta, phi, ))
+            if self.softmax:
+                orig_shape = f.shape
+                f = f.reshape(-1, h * w, h * w)
+                f = f / torch.sqrt(torch.tensor(c, device=f.device, dtype=f.dtype))
+                f = torch.softmax(f)
+                f = f.reshape(orig_shape)
+            f = torch.einsum('nabcd,nicd->niab', (f, g, ))
+        else:
+            f = torch.einsum('nihw,njhw->nij', (phi, g, ))
+            f = torch.einsum('nij,nihw->njhw', (f, theta, ))
+        if not self.softmax:
+            f = f / torch.tensor(h * w, device=f.device, dtype=f.dtype)
+        f = f.reshape(x.shape)
+
+        y = self.mapping(f) + res
         y = F.relu(y, self.inplace)
 
         return y
