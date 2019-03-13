@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from .data.sampler import *
-from .data.cifar_subset import *
+from .data import *
 from .scheduler import *
 from .training import *
 from .loss import *
+from .distributed import *

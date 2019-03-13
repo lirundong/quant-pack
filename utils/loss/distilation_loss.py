@@ -35,10 +35,22 @@ __all__ = ["KDistLoss"]
 
 
 def kd_loss(logits, labels, teacher_logits, soft_weight, temperature):
-    return F.kl_div(F.log_softmax(logits / temperature, dim=1),
-                    F.softmax(teacher_logits / temperature, dim=1)) \
-           * (soft_weight * temperature * temperature) \
-           + F.cross_entropy(logits, labels) * (1. - soft_weight)
+    if torch.is_tensor(logits) and torch.is_tensor(teacher_logits):
+        soft_loss = F.kl_div(F.log_softmax(logits / temperature, dim=1),
+                             F.softmax(teacher_logits / temperature, dim=1))
+        hard_loss = F.cross_entropy(logits, labels)
+    else:
+        assert len(logits) == len(teacher_logits)
+        soft_losses = []
+        n_levels = len(logits)
+        for l, tl in zip(logits, teacher_logits):
+            soft_losses.append(F.kl_div(F.log_softmax(l / temperature, dim=1),
+                                        F.softmax(tl / temperature, dim=1)))
+        soft_loss = sum(soft_losses) / n_levels
+        hard_loss = F.cross_entropy(logits[-1], labels)
+
+    return soft_loss * (soft_weight * temperature * temperature) \
+           + hard_loss * (1. - soft_weight)
 
 
 class KDistLoss(nn.Module):

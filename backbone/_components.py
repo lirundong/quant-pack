@@ -10,8 +10,54 @@ from torch.nn import Parameter
 from torch.distributions import Multinomial
 from torchvision.utils import make_grid
 
+
+class Visible:
+    def __init__(self, vis_channels=None):
+        self.vis = False
+        self.name = None
+        self.iter = -1
+        self.tb_logger = None
+        self.vis_channels = vis_channels
+
+    def vis_feat(self, feat):
+        with torch.no_grad():
+            prefix = self.name if self.training else f"{self.name}/eval"
+            self.tb_logger.add_histogram(prefix + "/feat", feat, self.iter)
+
+            if isinstance(self, nn.Conv2d):
+                y0 = feat[0].unsqueeze(0).permute(1, 0, 2, 3)
+                if self.vis_channels is not None:
+                    y0 = y0[self.vis_channels]
+                n_rows = math.ceil(math.sqrt(y0.size(0)))
+                y0_img = make_grid(y0, nrow=n_rows, normalize=True)
+                self.tb_logger.add_image(prefix + "/feat", y0_img, self.iter)
+
+    def vis_error(self, feat, ref_feat):
+        with torch.no_grad():
+            err = feat - ref_feat
+            snr = 10. * torch.log10(ref_feat.norm() / err.norm())
+            prefix = self.name if self.training else f"{self.name}/eval"
+            self.tb_logger.add_histogram(prefix + "/err", err, self.iter)
+            self.tb_logger.add_scalar("SNR/" + prefix, snr.item(), self.iter)
+
+    def forward_vis(self, y):
+        # TODO: rewrite as decorator
+        if self.vis:
+            if self.is_teacher:
+                for m in self.students:
+                    m.ref_feat = y.data
+            else:
+                self.vis_feat(y)
+                if self.ref_feat is not None:
+                    assert self.ref_feat.shape == y.shape, \
+                        f"FP and quant feat on layer `{self.name}` shape not match"
+                    self.vis_error(y, self.ref_feat)
+                    self.ref_feat = None
+            self.vis = False
+
+
 ###############################################################################
-# Non-linear
+# Denoiser
 ###############################################################################
 
 
@@ -72,20 +118,17 @@ class NaiveQuantSTE(Function):
         return dy.clone(), None
 
 
-class NaiveQuantConv2d(nn.Conv2d):
+class NaiveQuantConv2d(nn.Conv2d, Visible):
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                 padding=0, dilation=1, groups=1, bias=True, quant=False, bit_width=4):
+                 padding=0, dilation=1, groups=1, bias=True,
+                 quant=False, bit_width=4, vis_channels=None):
         super().__init__(in_channels, out_channels, kernel_size, stride,
                          padding, dilation, groups, bias)
+        Visible.__init__(self, vis_channels)
         self.quant = quant
         self.bit_width = bit_width
-
-        # visualization for analysis
-        self.vis = False
-        self.name = None
-        self.iter = -1
-        self.tb_logger = None
+        self.register_buffer("ref_feat", None)
 
     def forward(self, input):
         if self.quant:
@@ -93,62 +136,32 @@ class NaiveQuantConv2d(nn.Conv2d):
             w = q(self.weight, self.bit_width)
             y = F.conv2d(input, w, self.bias, self.stride,
                          self.padding, self.dilation, self.groups)
-
-            if self.vis:
-                with torch.no_grad():
-                    y_fp = super().forward(input)
-                    y_err = y - y_fp
-                    prefix = self.name if self.training else f"{self.name}/eval"
-                    self.tb_logger.add_histogram(prefix + "/act_fp", y_fp, self.iter)
-                    self.tb_logger.add_histogram(prefix + "/act_quant", y, self.iter)
-                    self.tb_logger.add_histogram(prefix + "/act_error", y_err, self.iter)
-
-                    # visualize feature map
-                    y0 = y[0].unsqueeze(0).permute(1, 0, 2, 3)
-                    y_fp0 = y_fp[0].unsqueeze(0).permute(1, 0, 2, 3)
-                    n_rows = math.ceil(math.sqrt(y0.size(0)))
-                    y0_img = make_grid(y0, nrow=n_rows, normalize=True)
-                    y_fp0_img = make_grid(y_fp0, nrow=n_rows, normalize=True)
-                    self.tb_logger.add_image(prefix + "/feat_quant", y0_img, self.iter)
-                    self.tb_logger.add_image(prefix + "/feat_fp", y_fp0_img, self.iter)
-                    self.vis = False
         else:
             y = super().forward(input)
 
+        self.forward_vis(y)
         return y
 
 
-class NaiveQuantLinear(nn.Linear):
+class NaiveQuantLinear(nn.Linear, Visible):
 
-    def __init__(self, in_features, out_features, bias=True, quant=False, bit_width=4):
+    def __init__(self, in_features, out_features, bias=True, quant=False,
+                 bit_width=4, vis_channels=None):
         super().__init__(in_features, out_features, bias)
+        Visible.__init__(self, vis_channels)
         self.quant = quant
         self.bit_width = bit_width
-
-        # visualization for analysis
-        self.vis = False
-        self.name = None
-        self.iter = -1
-        self.tb_logger = None
+        self.register_buffer("ref_feat", None)
 
     def forward(self, input):
         if self.quant:
             q = NaiveQuantSTE.apply
             w = q(self.weight, self.bit_width)
             y = F.linear(input, w, self.bias)
-
-            if self.vis:
-                with torch.no_grad():
-                    y_fp = super().forward(input)
-                    y_err = y - y_fp
-                    prefix = self.name if self.training else f"{self.name}/eval"
-                    self.tb_logger.add_histogram(prefix + "/act_fp", y_fp, self.iter)
-                    self.tb_logger.add_histogram(prefix + "/act_quant", y, self.iter)
-                    self.tb_logger.add_histogram(prefix + "/act_error", y_err, self.iter)
-                    self.vis = False
         else:
             y = super().forward(input)
 
+        self.forward_vis(y)
         return y
 
 ###############################################################################
@@ -161,14 +174,15 @@ def inv_sigmoid(x, lb, ub):
     return - torch.log(1. / x - 1.)
 
 
-class TernaryConv2d(nn.Conv2d):
+class TernaryConv2d(nn.Conv2d, Visible):
     """Implementation of `LR-Nets`(https://arxiv.org/abs/1710.07739)."""
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
                  padding=0, dilation=1, groups=1, bias=True, quant=False,
-                 p_max=0.95, p_min=0.05):
+                 p_max=0.95, p_min=0.05, vis_channels=None):
         super().__init__(in_channels, out_channels, kernel_size, stride,
                          padding, dilation, groups, bias)
+        Visible.__init__(self, vis_channels)
 
         self.quant = quant
         self.p_max = p_max
@@ -178,12 +192,6 @@ class TernaryConv2d(nn.Conv2d):
         self.p_a = Parameter(torch.zeros_like(self.weight))
         self.p_b = Parameter(torch.zeros_like(self.weight))
         self.reset_p()
-
-        # visualization for analysis
-        self.vis = False
-        self.name = None
-        self.iter = -1
-        self.tb_logger = None
 
     def reset_p(self):
         w = self.weight.data / self.weight.data.std()
@@ -213,27 +221,20 @@ class TernaryConv2d(nn.Conv2d):
                 w = self.w_candidate[indices]
                 y = F.conv2d(input, w, self.bias, self.stride,
                              self.padding, self.dilation, self.groups)
-
-            if self.vis:
-                with torch.no_grad():
-                    y_fp = super().forward(input)
-                    y_err = y - y_fp
-                    self.tb_logger.add_histogram(self.name + "/act_fp", y_fp, self.iter)
-                    self.tb_logger.add_histogram(self.name + "/act_sampled", y, self.iter)
-                    self.tb_logger.add_histogram(self.name + "/act_error", y_err, self.iter)
-                    self.vis = False
         else:
             y = super().forward(input)
 
+        self.forward_vis(y)
         return y
 
 
-class TernaryLinear(nn.Linear):
+class TernaryLinear(nn.Linear, Visible):
     """Implementation of `LR-Nets`(https://arxiv.org/abs/1710.07739)."""
 
     def __init__(self, in_features, out_features, bias=True, quant=False,
-                 p_max=0.95, p_min=0.05):
+                 p_max=0.95, p_min=0.05, vis_channels=None):
         super().__init__(in_features, out_features, bias)
+        Visible.__init__(self, vis_channels)
 
         self.quant = quant
         self.p_max = p_max
@@ -243,12 +244,6 @@ class TernaryLinear(nn.Linear):
         self.p_a = Parameter(torch.zeros_like(self.weight))
         self.p_b = Parameter(torch.zeros_like(self.weight))
         self.reset_p()
-
-        # visualization for analysis
-        self.vis = False
-        self.name = None
-        self.iter = -1
-        self.tb_logger = None
 
     def reset_p(self):
         w = self.weight.data / self.weight.data.std()
@@ -275,17 +270,8 @@ class TernaryLinear(nn.Linear):
                 indices = m.sample().argmax(dim=-1)
                 w = self.w_candidate[indices]
                 y = F.linear(input, w, self.bias)
-
-            if self.vis:
-                with torch.no_grad():
-                    y_fp = super().forward(input)
-                    y_err = y - y_fp
-                    self.tb_logger.add_histogram(self.name + "/act_fp", y_fp, self.iter)
-                    self.tb_logger.add_histogram(self.name + "/act_sampled", y, self.iter)
-                    self.tb_logger.add_histogram(self.name + "/act_error", y_err, self.iter)
-                    self.vis = False
         else:
             y = super().forward(input)
 
+        self.forward(y)
         return y
-

@@ -8,11 +8,11 @@ __all__ = ["IterationScheduler"]
 
 
 class IterationScheduler(object):
-    def __init__(self, optimizer, milestones, dataset_size, batch_size, gamma=0.1, last_iter=-1):
+    def __init__(self, optimizer, milestones, dataset_size, batch_size, world_size=1, gamma=0.1, last_iter=-1):
         if not isinstance(optimizer, Optimizer):
-            raise TypeError('{} is not an Optimizer'.format(
-                type(optimizer).__name__))
+            raise TypeError('{} is not an Optimizer'.format(type(optimizer).__name__))
         self.optimizer = optimizer
+        batch_size *= world_size
         epoch_size = dataset_size // batch_size
         if last_iter == -1:
             for group in optimizer.param_groups:

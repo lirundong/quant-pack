@@ -1,24 +1,15 @@
 # -*- coding: utf-8 -*-
 
-from copy import copy
-
-import torch
 import torch.nn as nn
 
-from ._components import TernaryConv2d, TernaryLinear, NaiveQuantConv2d, NaiveQuantLinear, \
-    NonLocal
+from ._components import TernaryConv2d, TernaryLinear, NaiveQuantConv2d, \
+                         NaiveQuantLinear, NonLocal
+from ._quant_backbone import QuantBackbone
 
 __all__ = ["cifar10_ternary_lr", "cifar10_quant_ste"]
 
-quantifiable = (TernaryConv2d, TernaryLinear, NaiveQuantConv2d, NaiveQuantLinear)
-visible = (TernaryConv2d, TernaryLinear, NaiveQuantConv2d, NaiveQuantLinear)
-probabilistic = (TernaryConv2d, TernaryLinear)
-decayable = (nn.Conv2d, nn.Linear)
-param_denoise = (NonLocal, )
 
-
-class CIFAR10(nn.Module):
-
+class CIFAR10(QuantBackbone):
     # convolution blocks: num_block, num_channel
     cfg = [
         (2, 128),
@@ -66,63 +57,6 @@ class CIFAR10(nn.Module):
         logits = self.fc(f)
 
         return logits
-
-    def opt_param_groups(self, opt_prob=False, denoise_only=False, **opt_conf):
-        decay_group = dict(params=[], **opt_conf)
-        no_decay_conf = copy(opt_conf)
-        no_decay_conf['weight_decay'] = 0.
-        no_decay_group = dict(params=[], **no_decay_conf)
-
-        if denoise_only:
-            for m in self.modules():
-                if isinstance(m, param_denoise):
-                    for p in m.parameters():
-                        no_decay_group["params"].append(p)
-            return [no_decay_group, ]
-
-        def param_filter(name, module):
-            if isinstance(module, probabilistic) and any(s in name for s in ("weight", "p_a", "p_b")):
-                if opt_prob:
-                    return any(s in name for s in ("p_a", "p_b"))
-                else:
-                    return "weight" in name
-            else:
-                return torch.is_tensor(p)
-
-        for m in self.modules():
-            for n, p in m._parameters.items():
-                if param_filter(n, m):
-                    if isinstance(m, decayable) and any(s in n for s in ("weight", "p_a", "p_b")):
-                        decay_group["params"].append(p)
-                    else:
-                        no_decay_group["params"].append(p)
-
-        return [decay_group, no_decay_group]
-
-    def quant(self, enable=True):
-        for m in self.modules():
-            if isinstance(m, quantifiable):
-                m.quant = enable
-
-    def full_precision(self):
-        self.quant(False)
-
-    def reset_p(self):
-        for m in self.modules():
-            if isinstance(m, probabilistic):
-                m.reset_p()
-
-    def register_vis(self, tb_logger):
-        for n, m in self.named_modules():
-            if isinstance(m, visible):
-                m.name = n
-                m.tb_logger = tb_logger
-
-    def vis(self, iter):
-        for n, m in self.named_modules():
-            if isinstance(m, visible):
-                m.iter = iter
-                m.vis = True
 
 
 def cifar10_ternary_lr(**kwargs):

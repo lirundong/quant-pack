@@ -9,13 +9,17 @@ from datetime import timedelta
 import torch
 import torch.nn as nn
 import numpy as np
+import linklink as link
 
 
+_rank = 0
 __all__ = ["init_log", "accuracy", "map_to_cpu", "get_eta", "update_bn_stat",
            "AverageMeter"]
 
 
-def init_log(debug=False):
+def init_log(debug=False, rank=0):
+    global _rank
+    _rank = rank
     level = logging.DEBUG if debug else logging.INFO
     log_fmt = f"%(asctime)s-%(filename)s#%(lineno)d: [%(levelname)s] %(message)s"
     date_fmt = "%Y-%m-%d_%H:%M:%S"
@@ -26,19 +30,25 @@ def init_log(debug=False):
     logger = logging.getLogger("global")
     logger.setLevel(level)
     logger.addHandler(ch)
+    logger.addFilter(lambda record: _rank == 0)
 
     return logger
 
 
-def accuracy(output, target):
+def accuracy(output, target, world_size=1):
     """Computes the accuracy over the k top predictions for the specified values of k"""
     with torch.no_grad():
+        if not torch.is_tensor(output):
+            output = output[-1]
         batch_size = target.size(0)
         _, pred = output.topk(1, 1, True, True)
         pred = pred.t()
         correct = pred.eq(target.view(1, -1).expand_as(pred))
         correct_k = correct.view(-1).float().sum(0, keepdim=True)
-        return correct_k.mul_(100.0 / batch_size).item()
+        acc = correct_k.mul_(100.0 / batch_size)
+        if world_size > 1:
+            link.allreduce(acc)
+        return acc.div_(world_size).item()
 
 
 def map_to_cpu(src):
