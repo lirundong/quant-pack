@@ -39,9 +39,6 @@ class IterationScheduler(object):
     def load_state_dict(self, state_dict):
         self.__dict__.update(state_dict)
 
-    def get_lr(self):
-        return [lr * self.gamma for lr in self.base_lrs]
-
     def step(self, iteration=None):
         if iteration is None:
             iteration = self.last_iter + 1
@@ -54,5 +51,5 @@ class IterationScheduler(object):
             self.next_milestone = min(remain_milestones)
         else:
             self.next_milestone = None
-        for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
-            param_group['lr'] = lr
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] *= self.gamma

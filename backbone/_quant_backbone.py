@@ -6,12 +6,15 @@ import torch
 import torch.nn as nn
 
 from ._components import TernaryConv2d, TernaryLinear, NaiveQuantConv2d, \
-                         NaiveQuantLinear, NonLocal
+                         NaiveQuantLinear, NonLocal, DiffBoundary, \
+                         QConv2dDiffBounds, QLinearDiffBounds
 
 __all__ = ["QuantBackbone"]
 
-quantifiable = (TernaryConv2d, TernaryLinear, NaiveQuantConv2d, NaiveQuantLinear)
-visible = (TernaryConv2d, TernaryLinear, NaiveQuantConv2d, NaiveQuantLinear)
+quantifiable = (TernaryConv2d, TernaryLinear, NaiveQuantConv2d, NaiveQuantLinear,
+                QConv2dDiffBounds, QLinearDiffBounds)
+visible = (TernaryConv2d, TernaryLinear, NaiveQuantConv2d, NaiveQuantLinear,
+           QConv2dDiffBounds, QLinearDiffBounds)
 probabilistic = (TernaryConv2d, TernaryLinear)
 decayable = (nn.Conv2d, nn.Linear)
 param_denoise = (NonLocal, )
@@ -19,7 +22,7 @@ param_denoise = (NonLocal, )
 
 class QuantBackbone(nn.Module):
 
-    def opt_param_groups(self, opt_prob=False, denoise_only=False, **opt_conf):
+    def opt_param_groups(self, opt_prob=False, denoise_only=False, bounds_only=False, **opt_conf):
         decay_group = dict(params=[], **opt_conf)
         no_decay_conf = copy(opt_conf)
         no_decay_conf['weight_decay'] = 0.
@@ -32,6 +35,15 @@ class QuantBackbone(nn.Module):
                         no_decay_group["params"].append(p)
             return [no_decay_group, ]
 
+        if bounds_only:
+            for m in self.modules():
+                # TODO: recover me!
+                if isinstance(m, DiffBoundary):
+                # if isinstance(m, QConv2dDiffBounds):
+                    no_decay_group["params"].append(m.lb)
+                    no_decay_group["params"].append(m.ub)
+            return [no_decay_group, ]
+
         def param_filter(name, module):
             if isinstance(module, probabilistic) and any(s in name for s in ("weight", "p_a", "p_b")):
                 if opt_prob:
@@ -39,7 +51,7 @@ class QuantBackbone(nn.Module):
                 else:
                     return "weight" in name
             else:
-                return torch.is_tensor(p)
+                return torch.is_tensor(p) and p.requires_grad
 
         for m in self.modules():
             for n, p in m._parameters.items():
@@ -63,6 +75,11 @@ class QuantBackbone(nn.Module):
         for m in self.modules():
             if isinstance(m, probabilistic):
                 m.reset_p()
+
+    def reset_boundaries(self):
+        for m in self.modules():
+            if isinstance(m, DiffBoundary):
+                m.reset_boundaries()
 
     def register_vis(self, tb_logger, sub_fix=None):
         for n, m in self.named_modules():

@@ -4,7 +4,8 @@ import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 
 from ._components import NaiveQuantConv2d, NaiveQuantLinear, \
-                         TernaryConv2d, TernaryLinear, NonLocal
+                         TernaryConv2d, TernaryLinear, NonLocal, \
+                         QConv2dDiffBounds, QLinearDiffBounds
 from ._quant_backbone import QuantBackbone
 
 __all__ = ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152']
@@ -21,11 +22,14 @@ model_urls = {
 def get_conv(in_channels, out_channels, kernel_size, stride=1, padding=0,
              dilation=1, groups=1, bias=True, quant_mode=None, **kwargs):
     if not quant_mode:
-        conv = nn.Conv2d
+        return nn.Conv2d(in_channels, out_channels, kernel_size, stride,
+                         padding, dilation, groups, bias)
     elif quant_mode.lower() == "ste":
         conv = NaiveQuantConv2d
     elif quant_mode.lower() == "prob":
         conv = TernaryConv2d
+    elif quant_mode.lower() == "opt_bounds":
+        conv = QConv2dDiffBounds
     else:
         raise ValueError(f"Invalid quant mode: `{quant_mode}`")
 
@@ -35,11 +39,13 @@ def get_conv(in_channels, out_channels, kernel_size, stride=1, padding=0,
 
 def get_linear(in_features, out_features, bias=True, quant_mode=None, **kwargs):
     if not quant_mode:
-        linear = nn.Linear
+        return nn.Linear(in_features, out_features, bias)
     elif quant_mode.lower() == "ste":
         linear = NaiveQuantLinear
     elif quant_mode.lower() == "prob":
         linear = TernaryLinear
+    elif quant_mode.lower() == "opt_bounds":
+        linear = QLinearDiffBounds
     else:
         raise ValueError(f"Invalid quant mode: `{quant_mode}`")
 
@@ -157,13 +163,15 @@ class ResNet(QuantBackbone):
         super(ResNet, self).__init__()
 
         self.quant_mode = kwargs.get("quant_mode")
+        self.quant_conv = self.quant_mode["conv"]
+        self.quant_linear = self.quant_mode["linear"]
         self.quant_conf = kwargs.get("quant_conf", dict())
         self.denoise_mode = kwargs.get("denoise_mode")
         self.denoise_conf = kwargs.get("denoise_conf", dict())
         self.distillation = kwargs.get("distillation", False)
 
         self.conv1 = get_conv(3, 64, kernel_size=7, stride=2, padding=3,
-                              bias=False, quant_mode=self.quant_mode, **self.quant_conf)
+                              bias=False, quant_mode=self.quant_conv, **self.quant_conf)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -173,7 +181,7 @@ class ResNet(QuantBackbone):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
         self.avgpool = nn.AvgPool2d(7, stride=1)
         self.fc = get_linear(512 * block.expansion, num_classes,
-                             quant_mode=self.quant_mode, **self.quant_conf)
+                             quant_mode=self.quant_linear, **self.quant_conf)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -188,7 +196,7 @@ class ResNet(QuantBackbone):
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
                 conv1x1(self.inplanes, planes * block.expansion, stride,
-                        quant_mode=self.quant_mode, **self.quant_conf),
+                        quant_mode=self.quant_conv, **self.quant_conf),
                 nn.BatchNorm2d(planes * block.expansion),
             )
 
@@ -196,7 +204,7 @@ class ResNet(QuantBackbone):
             "quant": self.quant_conf,
             "denoise": self.denoise_conf,
             "enable_denoise": bool(self.denoise_mode),
-            "quant_mode": self.quant_mode,
+            "quant_mode": self.quant_conv,
         }
         layers = [block(self.inplanes, planes, stride, downsample, **block_conf)]
         self.inplanes = planes * block.expansion

@@ -3,10 +3,11 @@
 import torch.nn as nn
 
 from ._components import TernaryConv2d, TernaryLinear, NaiveQuantConv2d, \
-                         NaiveQuantLinear, NonLocal
+                         NaiveQuantLinear, QConv2dDiffBounds, \
+                         QLinearDiffBounds, NonLocal
 from ._quant_backbone import QuantBackbone
 
-__all__ = ["cifar10_ternary_lr", "cifar10_quant_ste"]
+__all__ = ["cifar10_ternary_lr", "cifar10_quant_ste", "cifar10_opt_bounds"]
 
 
 class CIFAR10(QuantBackbone):
@@ -44,6 +45,7 @@ class CIFAR10(QuantBackbone):
         self.fc = nn.Sequential(
             nn.Dropout(p=0.5),
             self.fc_block(4 * 4 * 512, 1024, **kwargs),
+            # TODO: all-negative before this, on 2-bits w/o FT
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.5),
             nn.Linear(1024, num_classes),
@@ -60,7 +62,7 @@ class CIFAR10(QuantBackbone):
 
 
 def cifar10_ternary_lr(**kwargs):
-    return CIFAR10(TernaryConv2d, TernaryLinear, **kwargs)
+    return CIFAR10(TernaryConv2d, TernaryLinear, nn.ReLU, **kwargs)
 
 
 def cifar10_quant_ste(denoise=False, **kwargs):
@@ -69,3 +71,7 @@ def cifar10_quant_ste(denoise=False, **kwargs):
     else:
         non_linear = nn.ReLU
     return CIFAR10(NaiveQuantConv2d, NaiveQuantLinear, non_linear, **kwargs)
+
+
+def cifar10_opt_bounds(**kwargs):
+    return CIFAR10(QConv2dDiffBounds, QLinearDiffBounds, nn.ReLU, **kwargs)

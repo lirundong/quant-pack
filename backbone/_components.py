@@ -40,14 +40,25 @@ class Visible:
             self.tb_logger.add_histogram(prefix + "/err", err, self.iter)
             self.tb_logger.add_scalar("SNR/" + prefix, snr.item(), self.iter)
 
+    def vis_weight(self):
+        if self.vis and self.iter <= 1:
+            w = self.weight.detach()
+            self.tb_logger.add_histogram(f"{self.name}/weight", w.view(-1), self.iter)
+
+    def vis_bound(self):
+        if self.vis:
+            self.tb_logger.add_scalar(f"{self.name}/lb", self.lb.item(), self.iter)
+            self.tb_logger.add_scalar(f"{self.name}/ub", self.ub.item(), self.iter)
+
     def forward_vis(self, y):
         # TODO: rewrite as decorator
         if self.vis:
+            self.vis_feat(y)
             if self.is_teacher:
                 for m in self.students:
                     m.ref_feat = y.data
             else:
-                self.vis_feat(y)
+                # import pdb; pdb.set_trace()
                 if self.ref_feat is not None:
                     assert self.ref_feat.shape == y.shape, \
                         f"FP and quant feat on layer `{self.name}` shape not match"
@@ -162,6 +173,114 @@ class NaiveQuantLinear(nn.Linear, Visible):
             y = super().forward(input)
 
         self.forward_vis(y)
+        return y
+
+###############################################################################
+# Differentiable quantization boundaries
+###############################################################################
+
+
+class RoundSTE(Function):
+
+    @staticmethod
+    def forward(ctx, x):
+        return x.round()
+
+    @staticmethod
+    def backward(ctx, dy):
+        return dy.clone()
+
+
+class DiffBoundary:
+
+    def __init__(self, bit_width=4):
+        # TODO: add channel-wise option?
+        self.bit_width = bit_width
+        self.register_boundaries()
+
+    def register_boundaries(self):
+        assert hasattr(self, "weight")
+        self.lb = Parameter(self.weight.data.min())
+        self.ub = Parameter(self.weight.data.max())
+
+    def reset_boundaries(self):
+        assert hasattr(self, "weight")
+        self.lb.data = self.weight.data.min()
+        self.ub.data = self.weight.data.max()
+
+    def get_quant_weight(self, align_zero=True):
+        # TODO: set `align_zero`?
+        if align_zero:
+            return self._get_quant_weight_align_zero()
+        else:
+            return self._get_quant_weight()
+
+    def _get_quant_weight(self):
+        round_ = RoundSTE.apply
+        w = self.weight.detach()
+        delta = (self.ub - self.lb) / (2 ** self.bit_width - 1)
+        w = torch.clamp(w, self.lb.item(), self.ub.item())
+        idx = round_((w - self.lb).div(delta))  # TODO: do we need STE here?
+        qw = (idx * delta) + self.lb
+        return qw
+
+    def _get_quant_weight_align_zero(self):
+        # TODO: WTF?
+        round_ = RoundSTE.apply
+        n = 2 ** self.bit_width - 1
+        w = self.weight.detach()
+        delta = (self.ub - self.lb) / n
+        z = round_(self.lb.abs() / delta)
+        lb = -z * delta
+        ub = (n - z) * delta
+        w = torch.clamp(w, lb.item(), ub.item())
+        idx = round_((w - self.lb).div(delta))  # TODO: do we need STE here?
+        qw = (idx - z) * delta
+        return qw
+
+
+class QConv2dDiffBounds(nn.Conv2d, DiffBoundary, Visible):
+
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1,
+                 padding=0, dilation=1, groups=1, bias=True,
+                 quant=False, bit_width=4):
+        super().__init__(in_channels, out_channels, kernel_size, stride,
+                         padding, dilation, groups, bias)
+        self.quant = quant
+        DiffBoundary.__init__(self, bit_width)
+        Visible.__init__(self)
+
+    def forward(self, input):
+        if self.quant:
+            w = self.get_quant_weight()
+            y = F.conv2d(input, w, self.bias, self.stride,
+                         self.padding, self.dilation, self.groups)
+        else:
+            y = super().forward(input)
+
+        self.vis_weight()
+        self.vis_bound()
+        return y
+
+
+class QLinearDiffBounds(nn.Linear, DiffBoundary, Visible):
+
+    def __init__(self, in_features, out_features, bias=True, quant=False,
+                 bit_width=4):
+        super().__init__(in_features, out_features, bias)
+        self.quant = quant
+        DiffBoundary.__init__(self, bit_width)
+        Visible.__init__(self)
+
+    def forward(self, input):
+        if self.quant:
+            w = self.get_quant_weight()
+            y = F.linear(input, w, self.bias)
+        else:
+            y = super().forward(input)
+
+        self.vis_weight()
+        self.vis_bound()
         return y
 
 ###############################################################################

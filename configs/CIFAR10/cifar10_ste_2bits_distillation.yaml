@@ -1,5 +1,8 @@
 # dataset
-data_dir: /mnt/lustre/lirundong/Data/Datasets/CIFAR
+dataset:
+  name: CIFAR10
+  args:
+    root: /mnt/lustre/lirundong/Data/Datasets/CIFAR
 train_data_conf:
   batch_size: &n 256
   shuffle: false
@@ -49,7 +52,9 @@ vis_iter: 1000
 tb_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_2bits_distillation/tb_logs
 
 # resume
-resume_path: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_2bits_distillation/checkpoints/checkpoint_final_best.pth
+# FP32 baseline: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10/checkpoints/checkpoint_final_best.pth
+# 2bits distillation: /mnt/lustre/lirundong/Data/quant-prob/cifar10_ste_2bits_distillation/checkpoints/checkpoint_final_best.pth
+resume_path: /mnt/lustre/lirundong/Data/quant-prob/LR_CIFAR10/checkpoints/checkpoint_final_best.pth  # TODO: recover this
 resume_opt: true
 reset_p: false
 
