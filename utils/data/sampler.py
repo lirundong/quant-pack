@@ -40,11 +40,11 @@ class IterationSampler(Sampler):
         self.call = 0
 
     def __iter__(self):
-        if self.call > 0:
-            raise RuntimeError("this sampler is not designed to be called more than once!!")
-
         self.call += 1
-        return iter(self.indices[self.gone_indices:])
+        indices = self.indices[self.gone_indices:]
+        np.random.seed(self.seed + self.call)
+        np.random.shuffle(indices)
+        return iter(indices)
 
     def __len__(self):
         return len(self.indices)

@@ -73,13 +73,16 @@ def main():
 
     logger.debug(f"building model `{CONF.arch}`...")
     model = backbone.__dict__[CONF.arch](**CONF.arch_conf).to(DEVICE, non_blocking=True)
-    model.quant(CONF.quant)
+    if CONF.quant:
+        model.quant()
     logger.debug(f"build model {model.__class__.__name__} done:\n{model}")
     logger.debug(f"model quantization: {CONF.quant}")
 
-    optimizer = optim.__dict__[CONF.opt](model.opt_param_groups(CONF.opt_prob, CONF.denoise_only, CONF.bounds_only,
-                                                                **CONF.opt_conf),
-                                         **CONF.opt_conf)
+    # TODO: better `param_groups` interface?
+    # optimizer = optim.__dict__[CONF.opt](model.opt_param_groups(CONF.opt_prob, CONF.denoise_only, CONF.bounds_only,
+    #                                                             **CONF.opt_conf),
+    #                                      **CONF.opt_conf)
+    optimizer = optim.__dict__[CONF.opt](model.get_param_group(**CONF.opt_conf), **CONF.opt_conf)
     scheduler = IterationScheduler(optimizer, dataset_size=len(train_set), world_size=WORLD_SIZE, **CONF.scheduler_conf)
 
     if CONF.debug:
@@ -116,11 +119,16 @@ def main():
         teacher.to(DEVICE, non_blocking=True)
         model.register_teacher(teacher)
         criterion = KDistLoss(CONF.soft_weight, CONF.temperature)
+    elif CONF.inv_distillation:
+        logger.debug("KL loss for inverse distillation...")
+        teacher = None
+        criterion = KDistLoss(CONF.soft_weight, CONF.temperature)
     else:
         teacher = None
         criterion = nn.CrossEntropyLoss().to(DEVICE, non_blocking=True)
 
     if CONF.get("tb_dir") and RANK == 0:
+        # TODO: vis interface for inv-distillation models
         tb_dir = os.path.join(CONF.tb_dir, f"{EXP_DATETIME}_{CONF.comment}")
         logger.debug(f"creating TensorBoard at: {tb_dir}...")
         os.makedirs(tb_dir, exist_ok=True)
@@ -132,10 +140,6 @@ def main():
     if CONF.dist:
         logger.debug(f"register all_reduce gradient hooks to model...")
         model = get_dist_module(model)
-        if scheduler.last_iter == 0:
-            logger.debug(f"scaling LR by world size {WORLD_SIZE}...")
-            for param in optimizer.param_groups:
-                param["lr"] *= WORLD_SIZE
 
     if CONF.update_bn:
         logger.debug(f"updating BN statistics by unlabeled data")
@@ -177,22 +181,9 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
         if i == 0:
             logger.debug(f"first data batch time: {t_data:.3f}s")
             logger.debug(f"LR milestones: {scheduler.milestones} steps.")
-
-        if i > 0 and i % CONF.eval_iter == 0:
-            eval_acc = evaluate(model, val_loader, step)
-            logger.info(f"[Step {i:6d}]: val_accuracy={eval_acc:.3f}%")
-            if TB_LOGGER is not None:
-                TB_LOGGER.add_scalar("evaluate/accuracy", eval_acc, scheduler.last_iter)
-            model.train()
-            if eval_acc > BEST_ACCURACY or best_model is None:
-                BEST_ACCURACY = eval_acc
-                best_model = {
-                    "model": map_to_cpu(model.state_dict()),
-                    "opt": map_to_cpu(optimizer.state_dict()),
-                    "scheduler": map_to_cpu(scheduler.state_dict()),
-                    "accuracy": eval_acc,
-                }
-            barrier()
+            if CONF.inv_distillation:
+                logger.debug(f"resetting activation range on first iteration...")
+                model.update_activation_quant_param(train_loader, CONF.calibration_steps, CONF.calibration_gamma)
 
         if CONF.quant and "vis_iter" in CONF and i % CONF.vis_iter == 0 and RANK == 0:
             model.vis(step)
@@ -207,6 +198,9 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
 
         if teacher_model is not None:
             loss = criterion(logits, label, teacher_logits)
+        elif CONF.inv_distillation:
+            logits_fp, logits_q = logits
+            loss = criterion(logits_fp, label, logits_q)
         else:
             loss = criterion(logits, label)
         loss = loss / WORLD_SIZE
@@ -234,10 +228,27 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
                 TB_LOGGER.add_scalar("train/learning_rate", lr, step)
             barrier()
 
+        if i > 0 and i % CONF.eval_iter == 0:
+            eval_acc = evaluate(model, val_loader, step)
+            logger.info(f"[Step {i:6d}]: val_accuracy={eval_acc:.3f}%")
+            if TB_LOGGER is not None:
+                TB_LOGGER.add_scalar("evaluate/accuracy", eval_acc, scheduler.last_iter)
+            model.train()
+            if eval_acc > BEST_ACCURACY or best_model is None:
+                BEST_ACCURACY = eval_acc
+                best_model = {
+                    "model": map_to_cpu(model.state_dict()),
+                    "opt": map_to_cpu(optimizer.state_dict()),
+                    "scheduler": map_to_cpu(scheduler.state_dict()),
+                    "accuracy": eval_acc,
+                }
+            barrier()
+
         if i % CONF.save_iter == 0 and best_model is not None:
             if RANK == 0:
+                model_iter = best_model["scheduler"]["last_iter"]
                 os.makedirs(CONF.checkpoint_dir, exist_ok=True)
-                save_path = os.path.join(CONF.checkpoint_dir, f"checkpoint_best.pth")
+                save_path = os.path.join(CONF.checkpoint_dir, f"checkpoint_best_i{model_iter}.pth")
                 with open(save_path, "wb") as f:
                     torch.save(best_model, f)
             barrier()

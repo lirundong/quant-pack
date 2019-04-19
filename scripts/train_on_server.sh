@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -e
 
 while getopts :p:qc:x:m:n: opt
 do
@@ -30,7 +31,7 @@ else
 fi
 
 source $HOME/.local/bin/env_spring.sh
-source activate r0.2.1
+source activate r0.2.2
 
 export PYTHONPATH=$ROOT:$PYTHONPATH
 
