@@ -14,7 +14,7 @@ import linklink as link
 
 _rank = 0
 __all__ = ["init_log", "accuracy", "map_to_cpu", "get_eta", "update_bn_stat",
-           "AverageMeter"]
+           "param_grad_ratio", "AverageMeter"]
 
 
 def init_log(debug=False, rank=0):
@@ -37,6 +37,8 @@ def init_log(debug=False, rank=0):
 
 def accuracy(output, target, world_size=1, debug=False):
     """Computes the accuracy over the k top predictions for the specified values of k"""
+    if output is None:
+        return 0.0
     with torch.no_grad():
         if not torch.is_tensor(output):
             output = output[-1]
@@ -106,6 +108,19 @@ def update_bn_stat(model, loader):
 
     for h in hooks:
         h.remove()
+
+
+def param_grad_ratio(model):
+    ratio_dict = OrderedDict()
+    eps = 1e-5
+    with torch.no_grad():
+        for n, p in model.named_parameters():
+            if p.grad is not None:
+                g_norm = p.grad.norm()
+                p_norm = p.norm()
+                ratio_dict[n] = g_norm.div(p_norm.add(eps)).item()
+
+    return ratio_dict
 
 
 class AverageMeter:

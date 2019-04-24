@@ -37,6 +37,7 @@ class IterationScheduler(object):
         self.world_size = world_size
         self.gamma = gamma
         self.last_iter = last_iter
+        self.in_warmup = self.last_iter < self.warmup_iters
         self.next_milestone = min([m for m in self.milestones if m >= last_iter])
 
         self.step(last_iter + 1)
@@ -54,6 +55,7 @@ class IterationScheduler(object):
 
         # linear warmup
         if self.last_iter < self.warmup_iters:
+            self.in_warmup = True
             for param, base_lr, target_lr in zip(self.optimizer.param_groups, self.base_lrs, self.target_lrs):
                 lr_delta = (target_lr - base_lr) / self.warmup_iters
                 lr = base_lr + lr_delta * self.last_iter
@@ -62,6 +64,7 @@ class IterationScheduler(object):
 
         # scale LR by world_size
         if self.last_iter == self.warmup_iters and self.world_size > 1:
+            self.in_warmup = False
             for param_group, target_lr in zip(self.optimizer.param_groups, self.target_lrs):
                 param_group["lr"] = target_lr
             return

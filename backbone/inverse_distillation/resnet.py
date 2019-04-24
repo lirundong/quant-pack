@@ -16,10 +16,10 @@ __all__ = ["resnet18_idq", "resnet50_idq"]
 
 class ResNetIDQ(ResNet):
 
-    def __init__(self, block, layers, num_classes=1000, bit_width=4):
+    def __init__(self, block, layers, num_classes=1000, bit_width=4, quant_all=True):
         super(ResNetIDQ, self).__init__(block, layers, num_classes)
         self.bit_width = bit_width
-        # TODO: examine the grad_hook on these parameters
+        self.quant_all = quant_all
         self.weight_quant_param = nn.ParameterDict()
         self.activation_quant_param = nn.ParameterDict()
         self.layer_names = dict()
@@ -28,12 +28,27 @@ class ResNetIDQ(ResNet):
     def init_quant_param(self):
         for n, m in self.named_modules():
             if isinstance(m, (nn.Conv2d, nn.Linear)):
+                self.layer_names[id(m)] = n
                 lb = Parameter(m.weight.detach().min())
                 ub = Parameter(m.weight.detach().max())
                 self.weight_quant_param[f"{n}_weight_lb".replace(".", "_")] = lb
                 self.weight_quant_param[f"{n}_weight_ub".replace(".", "_")] = ub
                 self.activation_quant_param[f"{n}_act_lb".replace(".", "_")] = Parameter(torch.tensor(0.))
                 self.activation_quant_param[f"{n}_act_ub".replace(".", "_")] = Parameter(torch.tensor(0.))
+
+    @staticmethod
+    def update_stat(input, name, percentile, param_bank):
+        if percentile == 1.:
+            v = input.max()
+        elif percentile == 0.:
+            v = input.min()
+        else:
+            k = int(input.numel() * percentile)
+            v = input[k]
+        if name in param_bank:
+            criteria = torch.min if percentile < 0.5 else torch.max
+            v = criteria(param_bank[name].detach(), v)
+        param_bank[name].data = v
 
     def update_weight_quant_param(self):
         for n, m in self.named_modules():
@@ -51,23 +66,12 @@ class ResNetIDQ(ResNet):
                 assert len(input) == 1
                 input = input[0]
             input_view, _ = input.detach().view(-1).sort()
-
-            def _update_stat(n, p):
-                k = int(input_view.numel() * p)
-                # v, _ = input_view.kthelement(k)
-                v = input_view[k]
-                if n in self.activation_quant_param:
-                    criteria = torch.min if p < 0.5 else torch.max
-                    v = criteria(self.activation_quant_param[n].detach(), v)
-                self.activation_quant_param[n].data = v
-
-            _update_stat(f"{name}_act_ub".replace(".", "_"), gamma)
-            _update_stat(f"{name}_act_lb".replace(".", "_"), 1. - gamma)
+            self.update_stat(input_view, f"{name}_act_ub".replace(".", "_"), gamma, self.activation_quant_param)
+            self.update_stat(input_view, f"{name}_act_lb".replace(".", "_"), 1. - gamma, self.activation_quant_param)
 
         handles = list()
         for n, m in self.named_modules():
             if isinstance(m, (nn.Conv2d, nn.Linear)):
-                self.layer_names[id(m)] = n
                 h = m.register_forward_hook(update_act_stat_hook)
                 handles.append(h)
 
@@ -82,30 +86,39 @@ class ResNetIDQ(ResNet):
             h.remove()
 
     def get_param_group(self, **opt_conf):
-        decay_group = copy(opt_conf)
-        decay_group["params"] = []
-        no_decay_group = copy(opt_conf)
-        no_decay_group["weight_decay"] = 0.
-        no_decay_group["params"] = []
+        weight_group = copy(opt_conf)
+        weight_group["params"] = []
+        quant_param_group = copy(opt_conf)
+        quant_param_group["lr"] *= 0.01  # TODO: check this?
+        quant_param_group["weight_decay"] = 0.
+        quant_param_group["params"] = []
 
-        for m in self.modules():
-            if len(m._parameters) > 0:  # TODO: dirty hack
-                if isinstance(m, (nn.Conv2d, nn.Linear)):
-                    decay_group["params"] += list(m.parameters())
-                else:
-                    no_decay_group["params"] += list(m.parameters())
+        for n, p in self.named_parameters():
+            if "quant_param" in n:
+                quant_param_group["params"].append(p)
+            else:
+                weight_group["params"].append(p)
 
-        return decay_group, no_decay_group
+        return weight_group, quant_param_group
 
-    def forward(self, inputs, fp_only=False):
+    def forward(self, inputs, fp_only=False, update_stat=False):
 
-        def do_fake_quant(m, x):
-            n = self.layer_names[id(m)]
-            w_lb = self.weight_quant_param[f"{n}_weight_lb".replace(".", "_")]
-            w_ub = self.weight_quant_param[f"{n}_weight_ub".replace(".", "_")]
-            x_lb = self.activation_quant_param[f"{n}_act_lb".replace(".", "_")]
-            x_ub = self.activation_quant_param[f"{n}_act_ub".replace(".", "_")]
-            qw = fake_quant(m.weight, w_lb, w_ub, self.bit_width)
+        def do_fake_quant(m, x, detach_w=False, gamma=0.999):  # TODO: add this to interface
+            name = self.layer_names[id(m)]
+            if update_stat:
+                input_view, _ = x.detach().view(-1).sort()
+                weight_view = m.weight.detach().view(-1)
+                self.update_stat(input_view, f"{name}_act_ub".replace(".", "_"), gamma, self.activation_quant_param)
+                self.update_stat(input_view, f"{name}_act_lb".replace(".", "_"), 1. - gamma, self.activation_quant_param)
+                self.update_stat(weight_view, f"{name}_weight_ub".replace(".", "_"), 1., self.weight_quant_param)
+                self.update_stat(weight_view, f"{name}_weight_lb".replace(".", "_"), 0., self.weight_quant_param)
+
+            w_lb = self.weight_quant_param[f"{name}_weight_lb".replace(".", "_")]
+            w_ub = self.weight_quant_param[f"{name}_weight_ub".replace(".", "_")]
+            x_lb = self.activation_quant_param[f"{name}_act_lb".replace(".", "_")]
+            x_ub = self.activation_quant_param[f"{name}_act_ub".replace(".", "_")]
+            w = m.weight.detach() if detach_w else m.weight
+            qw = fake_quant(w, w_lb, w_ub, self.bit_width)
             qx = fake_quant(x, x_lb, x_ub, self.bit_width)
             return qx, qw
 
@@ -120,7 +133,9 @@ class ResNetIDQ(ResNet):
             return F.linear(qx, qw, m.bias)
 
         def prepare_quant_forward():
-            for m in self.modules():
+            for n, m in self.named_modules():
+                if not self.quant_all and (n == "conv1" or n == "fc"):
+                    continue
                 if isinstance(m, nn.Conv2d):
                     m.forward = MethodType(quant_conv2d_forward, m)
                 elif isinstance(m, nn.Linear):

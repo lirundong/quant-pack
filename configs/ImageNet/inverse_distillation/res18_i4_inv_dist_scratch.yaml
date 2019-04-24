@@ -19,7 +19,7 @@ val_data_conf:
   num_workers: 1
 
 # validation setting
-eval_iter: &eval_n 300 # 625 # TODO: recover this
+eval_iter: &eval_n 625
 eval_vis: false
 
 # models
@@ -39,7 +39,7 @@ loss_args:
 # warmup: LR 0.2 -> 0.8 in 4 epochs
 opt: SGD
 opt_conf:
-  lr: 0.0005 # 0.05 # TODO: recover this!
+  lr: 0.05
   momentum: 0.9
   weight_decay: !!float 1e-4
   nesterov: true
@@ -50,26 +50,26 @@ scheduler_conf:
   milestones: [30, 60]
   gamma: 0.1
   batch_size: *n
-  warmup_epochs: 0 # 4 # TODO: recover this!
+  warmup_epochs: 4
   warmup_lr: 0.2
 
 # checkpoint
 save_iter: *eval_n
-checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil/checkpoints
+checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil_scratch/checkpoints
 
 # logging
 log_iter: 25
 # vis_iter: 625
-tb_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil/tb_logs
+tb_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil_scratch/tb_logs
 
 # resume
-resume_path: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
+# resume_path: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
 
 # distillation
 distillation: false
+inv_distillation: true
 soft_weight: 0.5
 temperature: 1.0  # TODO: should we decrease the temperature?
-inv_distillation: true
 calibration_steps: 25
 calibration_gamma: !!float 0.999
 

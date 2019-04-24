@@ -31,7 +31,7 @@ else
 fi
 
 source $HOME/.local/bin/env_spring.sh
-source activate r0.2.2
+source activate r0.2.1
 
 export PYTHONPATH=$ROOT:$PYTHONPATH
 

@@ -56,5 +56,6 @@ def dequantizer(qx: QuantT) -> Tensor:
 
 
 def fake_quant(x: Tensor, lb: Tensor, ub: Tensor, k: int) -> Tensor:
+    assert lb.lt(ub).all(), f"invalid quantization range: lb={lb.max().item()}, ub={ub.min().item()}"
     qx = linear_quant(x, lb, ub, k)
     return dequantizer(qx)

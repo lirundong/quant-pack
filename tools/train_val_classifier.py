@@ -8,6 +8,7 @@ from time import time
 from datetime import datetime
 from copy import deepcopy
 from pprint import pformat
+from itertools import chain
 
 import yaml
 import torch
@@ -62,14 +63,15 @@ def main():
 
     logger.debug(f"building dataset {CONF.dataset.name}...")
     train_set, val_set = get_dataset(CONF.dataset.name, **CONF.dataset.args)
+    logger.debug(f"building training loader...")
     train_loader = DataLoader(train_set,
                               sampler=IterationSampler(train_set, rank=RANK, world_size=WORLD_SIZE,
                                                        **CONF.train_samper_conf),
                               **CONF.train_data_conf)
+    logger.debug(f"building validation loader...")
     val_loader = DataLoader(val_set,
                             sampler=DistributedSampler(val_set, WORLD_SIZE, RANK) if CONF.dist else None,
                             **CONF.val_data_conf)
-    logger.debug(f"build dataset {CONF.dataset.name} done")
 
     logger.debug(f"building model `{CONF.arch}`...")
     model = backbone.__dict__[CONF.arch](**CONF.arch_conf).to(DEVICE, non_blocking=True)
@@ -118,14 +120,11 @@ def main():
         teacher.full_precision()
         teacher.to(DEVICE, non_blocking=True)
         model.register_teacher(teacher)
-        criterion = KDistLoss(CONF.soft_weight, CONF.temperature)
-    elif CONF.inv_distillation:
-        logger.debug("KL loss for inverse distillation...")
-        teacher = None
-        criterion = KDistLoss(CONF.soft_weight, CONF.temperature)
     else:
         teacher = None
-        criterion = nn.CrossEntropyLoss().to(DEVICE, non_blocking=True)
+
+    logger.debug(f"building criterion {CONF.loss}...")
+    criterion = get_loss(CONF.loss, **CONF.loss_args)
 
     if CONF.get("tb_dir") and RANK == 0:
         # TODO: vis interface for inv-distillation models
@@ -133,9 +132,9 @@ def main():
         logger.debug(f"creating TensorBoard at: {tb_dir}...")
         os.makedirs(tb_dir, exist_ok=True)
         TB_LOGGER = SummaryWriter(tb_dir)
-        model.register_vis(TB_LOGGER, "quant")
-        if teacher is not None:
-            teacher.register_vis(TB_LOGGER, "teacher")
+        # model.register_vis(TB_LOGGER, "quant")
+        # if teacher is not None:
+        #     teacher.register_vis(TB_LOGGER, "teacher")
 
     if CONF.dist:
         logger.debug(f"register all_reduce gradient hooks to model...")
@@ -149,8 +148,9 @@ def main():
         assert CONF.resume_path is not None, f"load state_dict before evaluating"
         step = scheduler.last_iter
         logger.info(f"[Step {step}]: evaluating...")
-        accuracy = evaluate(model, val_loader, step)
-        logger.info(f"[Step {step}]: accuracy {accuracy:.3f}%.")
+        # TODO: generalize this
+        acc_fp, acc_q = evaluate(model, val_loader, step)
+        logger.info(f"[Step {step}]: acc_fp={acc_fp:.3f}%, acc_q={acc_q:.3f}%")
         return
 
     train(model, criterion, train_loader, val_loader, optimizer, scheduler, teacher)
@@ -166,7 +166,8 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
     logger = logging.getLogger("global")
     best_model = None
     t_iter = AverageMeter(20)
-    train_acc = AverageMeter(20)
+    train_fp_acc = AverageMeter(20)
+    train_q_acc = AverageMeter(20)
     model.train()
     train_loader.sampler.set_last_iter(scheduler.last_iter)
 
@@ -180,10 +181,9 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
 
         if i == 0:
             logger.debug(f"first data batch time: {t_data:.3f}s")
+            logger.debug(f"warmup: {scheduler.base_lrs[0]:.4f} -> {scheduler.target_lrs[0]:.4f} "
+                         f"({scheduler.warmup_iters} steps)")
             logger.debug(f"LR milestones: {scheduler.milestones} steps.")
-            if CONF.inv_distillation:
-                logger.debug(f"resetting activation range on first iteration...")
-                model.update_activation_quant_param(train_loader, CONF.calibration_steps, CONF.calibration_gamma)
 
         if CONF.quant and "vis_iter" in CONF and i % CONF.vis_iter == 0 and RANK == 0:
             model.vis(step)
@@ -194,13 +194,27 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
             with torch.no_grad():
                 teacher_logits = teacher_model(img)
 
-        logits = model(img)
+        # TODO: wrap this to scheduler or config
+        # start_quant_step = 1
+        start_quant_step = scheduler.milestones[0]
+        if CONF.inv_distillation and step == start_quant_step:
+            logger.debug(f"resetting quantization ranges at iteration {scheduler.last_iter}...")
+            model.update_weight_quant_param()
+            model.update_activation_quant_param(train_loader, CONF.calibration_steps, CONF.calibration_gamma)
+            # logger.debug(f"evaluating with calibrated quantization ranges...")
+            # eval_acc_fp, eval_acc_q = evaluate(model, val_loader, step)
+            # logger.info(f"[Step {step:6d}]: val_accuracy_fp={eval_acc_fp:.3f}%")
+            # logger.info(f"[Step {step:6d}]: val_accuracy_q={eval_acc_q:.3f}%")
+
+        logits = model(img, fp_only=step < start_quant_step)
 
         if teacher_model is not None:
-            loss = criterion(logits, label, teacher_logits)
+            soft_loss, hard_loss = criterion(logits, label, teacher_logits)
+            loss = soft_loss + hard_loss
         elif CONF.inv_distillation:
             logits_fp, logits_q = logits
-            loss = criterion(logits_fp, label, logits_q)
+            soft_loss, hard_loss = criterion(logits_fp, logits_q, label)
+            loss = soft_loss + hard_loss
         else:
             loss = criterion(logits, label)
         loss = loss / WORLD_SIZE
@@ -210,37 +224,61 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
 
         if CONF.dist:
             link.synchronize()
+
+        # TODO: visualize this in TensorBoard
+        # if CONF.debug and i % CONF.log_iter == 0:
+        #     grad_ratio = param_grad_ratio(model)
+        #     logger.debug(f"grad to param L2 norm ratio @ iter {i}")
+        #     logger.debug(pformat(grad_ratio))
+
         optimizer.step()
 
-        train_acc.set(accuracy(logits, label, WORLD_SIZE))
+        # TODO: generalize this
+        train_fp_acc.set(accuracy(logits_fp, label, WORLD_SIZE))
+        train_q_acc.set(accuracy(logits_q, label, WORLD_SIZE))
         t_iter.set(time() - t0)
 
         if i % CONF.log_iter == 0:
             lr = optimizer.param_groups[0]["lr"]
             eta = get_eta(step, len(train_loader), t_iter.avg())
-            logger.info(f"[Step {i:6d} / {len(train_loader):6d}]: LR={lr:.5f}, "
-                        f"train_accuracy={train_acc.avg():.3f}%, "
+            logger.info(f"[Step {i:6d} / {len(train_loader):6d}]: LR={lr:.4f}, "
+                        f"hard_loss={hard_loss.item():.3f}, "
+                        f"soft_loss={soft_loss.item():.3f}, "
+                        f"fp_acc={train_fp_acc.avg():.3f}%, "
+                        f"quant_acc={train_q_acc.avg():.3f}%, "
                         f"iter_time={t_iter.avg():.3f}s, "
-                        f"data_time={t_data:.3f}, ETA={eta}")
+                        f"data_time={t_data:.3f}s, ETA={eta}")
             if TB_LOGGER is not None:
-                TB_LOGGER.add_scalar("train/loss", loss.item(), step)
-                TB_LOGGER.add_scalar("train/accuracy", train_acc.avg(), step)
+                TB_LOGGER.add_scalar("train/loss/all", loss.item(), step)
+                TB_LOGGER.add_scalar("train/loss/cross_entropy", hard_loss.item(), step)
+                TB_LOGGER.add_scalar("train/loss/soft_KL", soft_loss.item(), step)
+                TB_LOGGER.add_scalar("train/accuracy_fp", train_fp_acc.avg(), step)
+                TB_LOGGER.add_scalar("train/accuracy_quant", train_q_acc.avg(), step)
                 TB_LOGGER.add_scalar("train/learning_rate", lr, step)
+                grad_ratio = param_grad_ratio(model)
+                for k, v in grad_ratio.items():
+                    TB_LOGGER.add_scalar(f"grad_ratio/{k}", v, step)
+                for k, p in chain(model.weight_quant_param.named_parameters(),
+                                  model.activation_quant_param.named_parameters()):
+                    TB_LOGGER.add_scalar(f"quant_range/{k}", p.data.item(), step)
             barrier()
 
         if i > 0 and i % CONF.eval_iter == 0:
-            eval_acc = evaluate(model, val_loader, step)
-            logger.info(f"[Step {i:6d}]: val_accuracy={eval_acc:.3f}%")
+            logger.debug(f"evaluating at iteration {step}...")
+            eval_acc_fp, eval_acc_q = evaluate(model, val_loader, step)
+            logger.info(f"[Step {i:6d}]: val_accuracy_fp={eval_acc_fp:.3f}%")
+            logger.info(f"[Step {i:6d}]: val_accuracy_q={eval_acc_q:.3f}%")
             if TB_LOGGER is not None:
-                TB_LOGGER.add_scalar("evaluate/accuracy", eval_acc, scheduler.last_iter)
+                TB_LOGGER.add_scalar("evaluate/acc_fp", eval_acc_fp, step)
+                TB_LOGGER.add_scalar("evaluate/acc_quant", eval_acc_q, step)
             model.train()
-            if eval_acc > BEST_ACCURACY or best_model is None:
-                BEST_ACCURACY = eval_acc
+            if eval_acc_fp > BEST_ACCURACY or best_model is None:
+                BEST_ACCURACY = eval_acc_fp
                 best_model = {
                     "model": map_to_cpu(model.state_dict()),
                     "opt": map_to_cpu(optimizer.state_dict()),
                     "scheduler": map_to_cpu(scheduler.state_dict()),
-                    "accuracy": eval_acc,
+                    "accuracy": eval_acc_fp,
                 }
             barrier()
 
@@ -266,7 +304,8 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
 
 def evaluate(model, loader, step):
     model.eval()
-    acc = 0.
+    acc_fp = 0.
+    acc_q = 0.
 
     with torch.no_grad():
         for i, (img, label) in enumerate(loader):
@@ -275,10 +314,13 @@ def evaluate(model, loader, step):
 
             img = img.to(DEVICE, non_blocking=True)
             label = label.to(DEVICE, non_blocking=True)
-            logitis = model(img)
-            acc += accuracy(logitis, label, WORLD_SIZE, debug=CONF.debug and i % 10 == 0)
+            logits = model(img)
+            # TODO: generalize this
+            logits_fp, logits_q = logits
+            acc_fp += accuracy(logits_fp, label, WORLD_SIZE)
+            acc_q += accuracy(logits_q, label, WORLD_SIZE)
 
-    return acc / len(loader)
+    return acc_fp / len(loader), acc_q / len(loader)
 
 
 if __name__ == "__main__":

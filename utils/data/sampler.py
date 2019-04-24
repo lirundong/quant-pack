@@ -19,10 +19,10 @@ class IterationSampler(Sampler):
             f"last_iter and last_epoch can't be both set"
 
         if total_iter is None:
-            total_iter = total_epoch * len(dataset) // batch_size
+            total_iter = total_epoch * len(dataset) // batch_size // world_size
         if last_iter is None:
             if last_epoch is not None and last_epoch > 0:
-                last_iter = last_epoch * len(dataset) // batch_size
+                last_iter = last_epoch * len(dataset) // batch_size // world_size
             else:
                 last_iter = -1
 
