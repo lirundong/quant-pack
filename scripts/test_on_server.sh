@@ -23,10 +23,10 @@ ROOT=..
 
 if [[ ! -f $ROOT/configs/${CONF_NAME}.yaml ]]; then
     echo "config \`${CONF_NAME}\` not exist";
-    JOB_NAME=${CONF_NAME/\//_}
     exit -1
 else
     CONF_FILE=${ROOT}/configs/${CONF_NAME}.yaml
+    JOB_NAME=${CONF_NAME//\//_}
     echo "evaluating with configure \`$CONF_FILE\`"
 fi
 

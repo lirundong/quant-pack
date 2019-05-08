@@ -23,18 +23,13 @@ class RoundSTE(Function):
         return dy.clone()
 
 
+def clamp(x: Tensor, lb: Tensor, ub: Tensor) -> Tensor:
+    x = torch.min(x, ub)
+    x = torch.max(lb, x)
+    return x
+
+
 def linear_quant(x: Tensor, lb: Tensor, ub: Tensor, k: int) -> QuantT:
-    """ qx = (i - z) * delta
-
-    Args:
-        x:
-        lb:
-        ub:
-        k:
-
-    Returns:
-
-    """
     round_ = RoundSTE.apply
     n = 2 ** k - 1
     eps = 1e-2  # TODO: add this to interface?
@@ -55,7 +50,15 @@ def dequantizer(qx: QuantT) -> Tensor:
     return i.sub(z).mul(delta)
 
 
-def fake_quant(x: Tensor, lb: Tensor, ub: Tensor, k: int) -> Tensor:
+def fake_quant(x: Tensor, lb: Tensor, ub: Tensor, k: int, align_zero: bool = True) -> Tensor:
     assert lb.lt(ub).all(), f"invalid quantization range: lb={lb.max().item()}, ub={ub.min().item()}"
-    qx = linear_quant(x, lb, ub, k)
-    return dequantizer(qx)
+    if align_zero:
+        qx = dequantizer(linear_quant(x, lb, ub, k))
+    else:
+        # TODO: wrap in helper functions?
+        round_ = RoundSTE.apply
+        n = 2 ** k - 1
+        delta = (ub - lb) / n
+        x = clamp(x, lb, ub)
+        qx = round_((x - lb) / delta) * delta + lb
+    return qx

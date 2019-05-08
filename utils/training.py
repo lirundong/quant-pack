@@ -5,12 +5,16 @@ from collections import OrderedDict
 from copy import deepcopy
 from collections import deque
 from datetime import timedelta
+from typing import Tuple, List
 
 import torch
 import torch.nn as nn
 import numpy as np
 import linklink as link
 
+TensorT = torch.Tensor
+IListT = Tuple[int], List[int]
+RListT = Tuple[float], List[float]
 
 _rank = 0
 __all__ = ["init_log", "accuracy", "map_to_cpu", "get_eta", "update_bn_stat",
@@ -35,15 +39,18 @@ def init_log(debug=False, rank=0):
     return logger
 
 
-def accuracy(output, target, world_size=1, debug=False):
+def accuracy(output: TensorT, target: TensorT, world_size: int = 1,
+             debug: bool = False, topk: IListT = (1, )) -> RListT:
     """Computes the accuracy over the k top predictions for the specified values of k"""
     if output is None:
-        return 0.0
+        return [0.0, ] * len(topk)
+    accs = []
+    maxk = max(*topk, 2)
     with torch.no_grad():
         if not torch.is_tensor(output):
             output = output[-1]
         batch_size = target.size(0)
-        top_logits, pred = output.topk(k=2, dim=1, largest=True, sorted=True)
+        top_logits, pred = output.topk(k=maxk, dim=1, largest=True, sorted=True)
         if debug:
             logits_diff = top_logits[:, 0] - top_logits[:, 1]
             diff_large_top, _ = logits_diff.topk(3, largest=True)
@@ -51,13 +58,17 @@ def accuracy(output, target, world_size=1, debug=False):
             logger = logging.getLogger("global")
             logger.debug(f"Top-3 logits diff: {diff_large_top}")
             logger.debug(f"Bottom-3 logits diff: {diff_small_top}")
-        pred = pred[:, 0].unsqueeze(-1).t()  # shape: (1, N)
+        pred = pred.t()  # shape: (k, N)
         correct = pred.eq(target.view(1, -1).expand_as(pred))
-        correct_k = correct.view(-1).float().sum(0, keepdim=True)
-        acc = correct_k.mul_(100.0 / batch_size)
-        if world_size > 1:
-            link.allreduce(acc)
-        return acc.div_(world_size).item()
+
+        for k in topk:
+            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            acc = correct_k.mul_(100.0 / batch_size)
+            if world_size > 1:
+                link.allreduce(acc)
+                acc.div_(world_size)
+            accs.append(acc.item())
+    return accs
 
 
 def map_to_cpu(src):

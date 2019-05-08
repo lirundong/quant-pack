@@ -75,22 +75,24 @@ def main():
 
     logger.debug(f"building model `{CONF.arch}`...")
     model = backbone.__dict__[CONF.arch](**CONF.arch_conf).to(DEVICE, non_blocking=True)
-    if CONF.quant:
-        model.quant()
+    # if CONF.quant:
+    #     model.quant()
     logger.debug(f"build model {model.__class__.__name__} done:\n{model}")
-    logger.debug(f"model quantization: {CONF.quant}")
+    # logger.debug(f"model quantization: {CONF.quant}")
 
     # TODO: better `param_groups` interface?
     # optimizer = optim.__dict__[CONF.opt](model.opt_param_groups(CONF.opt_prob, CONF.denoise_only, CONF.bounds_only,
     #                                                             **CONF.opt_conf),
     #                                      **CONF.opt_conf)
-    optimizer = optim.__dict__[CONF.opt](model.get_param_group(**CONF.opt_conf), **CONF.opt_conf)
-    scheduler = IterationScheduler(optimizer, dataset_size=len(train_set), world_size=WORLD_SIZE, **CONF.scheduler_conf)
+    weight_group, quant_param_group = model.get_param_group(CONF.weight_conf, CONF.quant_param_conf)
+    weight_opt = optim.__dict__[CONF.weight_opt](**weight_group)
+    quant_param_opt = optim.__dict__[CONF.quant_param_opt](**quant_param_group)
+    scheduler = IterationScheduler(weight_opt, dataset_size=len(train_set), world_size=WORLD_SIZE, **CONF.scheduler_conf)
 
     if CONF.debug:
         num_params = 0
         opt_conf = []
-        for p in optimizer.param_groups:
+        for p in chain(weight_opt.param_groups, quant_param_opt.param_groups):
             num_params += len(p["params"])
             opt_conf.append({k: v for k, v in p.items() if k != "params"})
         logger.debug(f"number of parameters: {num_params}")
@@ -109,7 +111,8 @@ def main():
             model.reset_boundaries()
         if CONF.get("resume_opt"):
             logger.debug(f"recovering optimizer...")
-            optimizer.load_state_dict(checkpoint["opt"])
+            weight_opt.load_state_dict(checkpoint["opt"])
+            quant_param_opt.load_state_dict(checkpoint["quant_opt"])
             BEST_ACCURACY = checkpoint["accuracy"]
             scheduler.load_state_dict(checkpoint["scheduler"])
             logger.debug(f"recovered opt at iteration: {scheduler.last_iter}")
@@ -149,14 +152,17 @@ def main():
         step = scheduler.last_iter
         logger.info(f"[Step {step}]: evaluating...")
         # TODO: generalize this
-        acc_fp, acc_q = evaluate(model, val_loader, step)
-        logger.info(f"[Step {step}]: acc_fp={acc_fp:.3f}%, acc_q={acc_q:.3f}%")
+        eval_fp_top1, eval_fp_top5, eval_q_top1, eval_q_top5 = evaluate(model, val_loader, step)
+        logger.info(f"[Step {step:6d}]: val_fp_top1={eval_fp_top1:.3f}%")
+        logger.info(f"[Step {step:6d}]: val_fp_top5={eval_fp_top5:.3f}%")
+        logger.info(f"[Step {step:6d}]: val_q_top1={eval_q_top1:.3f}%")
+        logger.info(f"[Step {step:6d}]: val_q_top5={eval_q_top5:.3f}%")
         return
 
-    train(model, criterion, train_loader, val_loader, optimizer, scheduler, teacher)
+    train(model, criterion, train_loader, val_loader, weight_opt, quant_param_opt, scheduler, teacher)
 
 
-def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teacher_model=None):
+def train(model, criterion, train_loader, val_loader, weight_opt, quant_param_opt, scheduler, teacher_model=None):
 
     def barrier():
         if CONF.dist:
@@ -166,8 +172,10 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
     logger = logging.getLogger("global")
     best_model = None
     t_iter = AverageMeter(20)
-    train_fp_acc = AverageMeter(20)
-    train_q_acc = AverageMeter(20)
+    train_fp_top1 = AverageMeter(20)
+    train_fp_top5 = AverageMeter(20)
+    train_q_top1 = AverageMeter(20)
+    train_q_top5 = AverageMeter(20)
     model.train()
     train_loader.sampler.set_last_iter(scheduler.last_iter)
 
@@ -195,16 +203,18 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
                 teacher_logits = teacher_model(img)
 
         # TODO: wrap this to scheduler or config
-        # start_quant_step = 1
-        start_quant_step = scheduler.milestones[0]
+        start_quant_step = 1
+        # start_quant_step = scheduler.milestones[0]
         if CONF.inv_distillation and step == start_quant_step:
             logger.debug(f"resetting quantization ranges at iteration {scheduler.last_iter}...")
             model.update_weight_quant_param()
             model.update_activation_quant_param(train_loader, CONF.calibration_steps, CONF.calibration_gamma)
-            # logger.debug(f"evaluating with calibrated quantization ranges...")
-            # eval_acc_fp, eval_acc_q = evaluate(model, val_loader, step)
-            # logger.info(f"[Step {step:6d}]: val_accuracy_fp={eval_acc_fp:.3f}%")
-            # logger.info(f"[Step {step:6d}]: val_accuracy_q={eval_acc_q:.3f}%")
+            logger.debug(f"evaluating with calibrated quantization ranges...")
+            eval_fp_top1, eval_fp_top5, eval_q_top1, eval_q_top5 = evaluate(model, val_loader, step)
+            logger.info(f"[Step {step:6d}]: val_fp_top1={eval_fp_top1:.3f}%")
+            logger.info(f"[Step {step:6d}]: val_fp_top5={eval_fp_top5:.3f}%")
+            logger.info(f"[Step {step:6d}]: val_q_top1={eval_q_top1:.3f}%")
+            logger.info(f"[Step {step:6d}]: val_q_top5={eval_q_top5:.3f}%")
 
         logits = model(img, fp_only=step < start_quant_step)
 
@@ -217,9 +227,9 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
             loss = soft_loss + hard_loss
         else:
             loss = criterion(logits, label)
-        loss = loss / WORLD_SIZE
+        loss = loss / WORLD_SIZE / CONF.loss_divisor
 
-        model.zero_grad()
+        # model.zero_grad()
         loss.backward()
 
         if CONF.dist:
@@ -231,54 +241,67 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
         #     logger.debug(f"grad to param L2 norm ratio @ iter {i}")
         #     logger.debug(pformat(grad_ratio))
 
-        optimizer.step()
+        # TODO: check this?
+        if i % 2 == 0:
+            weight_opt.step()
+        else:
+            quant_param_opt.step()
 
         # TODO: generalize this
-        train_fp_acc.set(accuracy(logits_fp, label, WORLD_SIZE))
-        train_q_acc.set(accuracy(logits_q, label, WORLD_SIZE))
+        batch_fp_top1, batch_fp_top5 = accuracy(logits_fp, label, WORLD_SIZE, topk=CONF.topk)
+        batch_q_top1, batch_q_top5 = accuracy(logits_q, label, WORLD_SIZE, topk=CONF.topk)
+        train_fp_top1.set(batch_fp_top1)
+        train_fp_top5.set(batch_fp_top5)
+        train_q_top1.set(batch_q_top1)
+        train_q_top5.set(batch_q_top5)
         t_iter.set(time() - t0)
 
         if i % CONF.log_iter == 0:
-            lr = optimizer.param_groups[0]["lr"]
+            lr = weight_opt.param_groups[0]["lr"]
             eta = get_eta(step, len(train_loader), t_iter.avg())
             logger.info(f"[Step {i:6d} / {len(train_loader):6d}]: LR={lr:.4f}, "
                         f"hard_loss={hard_loss.item():.3f}, "
                         f"soft_loss={soft_loss.item():.3f}, "
-                        f"fp_acc={train_fp_acc.avg():.3f}%, "
-                        f"quant_acc={train_q_acc.avg():.3f}%, "
+                        f"fp_top1={train_fp_top1.avg():.3f}%, "
+                        f"quant_top1={train_q_top1.avg():.3f}%, "
                         f"iter_time={t_iter.avg():.3f}s, "
                         f"data_time={t_data:.3f}s, ETA={eta}")
             if TB_LOGGER is not None:
                 TB_LOGGER.add_scalar("train/loss/all", loss.item(), step)
                 TB_LOGGER.add_scalar("train/loss/cross_entropy", hard_loss.item(), step)
                 TB_LOGGER.add_scalar("train/loss/soft_KL", soft_loss.item(), step)
-                TB_LOGGER.add_scalar("train/accuracy_fp", train_fp_acc.avg(), step)
-                TB_LOGGER.add_scalar("train/accuracy_quant", train_q_acc.avg(), step)
+                TB_LOGGER.add_scalar("train/fp_top1", train_fp_top1.avg(), step)
+                TB_LOGGER.add_scalar("train/fp_top5", train_fp_top5.avg(), step)
+                TB_LOGGER.add_scalar("train/quant_top1", train_q_top1.avg(), step)
+                TB_LOGGER.add_scalar("train/quant_top5", train_q_top5.avg(), step)
                 TB_LOGGER.add_scalar("train/learning_rate", lr, step)
-                grad_ratio = param_grad_ratio(model)
-                for k, v in grad_ratio.items():
-                    TB_LOGGER.add_scalar(f"grad_ratio/{k}", v, step)
-                for k, p in chain(model.weight_quant_param.named_parameters(),
-                                  model.activation_quant_param.named_parameters()):
-                    TB_LOGGER.add_scalar(f"quant_range/{k}", p.data.item(), step)
+                if CONF.debug:
+                    grad_ratio = param_grad_ratio(model)
+                    for k, v in grad_ratio.items():
+                        TB_LOGGER.add_scalar(f"grad_ratio/{k}", v, step)
+                    for k, p in chain(model.weight_quant_param.named_parameters(),
+                                      model.activation_quant_param.named_parameters()):
+                        TB_LOGGER.add_scalar(f"quant_range/{k}", p.data.item(), step)
             barrier()
 
         if i > 0 and i % CONF.eval_iter == 0:
             logger.debug(f"evaluating at iteration {step}...")
-            eval_acc_fp, eval_acc_q = evaluate(model, val_loader, step)
-            logger.info(f"[Step {i:6d}]: val_accuracy_fp={eval_acc_fp:.3f}%")
-            logger.info(f"[Step {i:6d}]: val_accuracy_q={eval_acc_q:.3f}%")
+            eval_fp_top1, eval_fp_top5, eval_q_top1, eval_q_top5 = evaluate(model, val_loader, step)
+            logger.info(f"[Step {i:6d}]: val_fp_top1={eval_fp_top1:.3f}%")
+            logger.info(f"[Step {i:6d}]: val_q_top1={eval_q_top1:.3f}%")
             if TB_LOGGER is not None:
-                TB_LOGGER.add_scalar("evaluate/acc_fp", eval_acc_fp, step)
-                TB_LOGGER.add_scalar("evaluate/acc_quant", eval_acc_q, step)
-            model.train()
-            if eval_acc_fp > BEST_ACCURACY or best_model is None:
-                BEST_ACCURACY = eval_acc_fp
+                TB_LOGGER.add_scalar("evaluate/fp_top1", eval_fp_top1, step)
+                TB_LOGGER.add_scalar("evaluate/fp_top5", eval_fp_top5, step)
+                TB_LOGGER.add_scalar("evaluate/quant_top1", eval_q_top1, step)
+                TB_LOGGER.add_scalar("evaluate/quant_top5", eval_q_top5, step)
+            if eval_q_top1 > BEST_ACCURACY or best_model is None:
+                BEST_ACCURACY = eval_q_top1
                 best_model = {
                     "model": map_to_cpu(model.state_dict()),
-                    "opt": map_to_cpu(optimizer.state_dict()),
+                    "opt": map_to_cpu(weight_opt.state_dict()),
+                    "quant_opt": map_to_cpu(quant_param_opt.state_dict()),
                     "scheduler": map_to_cpu(scheduler.state_dict()),
-                    "accuracy": eval_acc_fp,
+                    "accuracy": eval_q_top1,
                 }
             barrier()
 
@@ -286,16 +309,22 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
             if RANK == 0:
                 model_iter = best_model["scheduler"]["last_iter"]
                 os.makedirs(CONF.checkpoint_dir, exist_ok=True)
-                save_path = os.path.join(CONF.checkpoint_dir, f"checkpoint_best_i{model_iter}.pth")
+                save_path = os.path.join(CONF.checkpoint_dir, f"ckpt_{EXP_DATETIME}_i{model_iter}.pth")
                 with open(save_path, "wb") as f:
                     torch.save(best_model, f)
             barrier()
+
+        # TODO: check this?
+        if i % 2 == 0:
+            weight_opt.zero_grad()
+        else:
+            quant_param_opt.zero_grad()
 
         t0 = time()
 
     if RANK == 0:
         os.makedirs(CONF.checkpoint_dir, exist_ok=True)
-        save_path = os.path.join(CONF.checkpoint_dir, f"checkpoint_final_best.pth")
+        save_path = os.path.join(CONF.checkpoint_dir, f"ckpt_{EXP_DATETIME}_final.pth")
         with open(save_path, "wb") as f:
             torch.save(best_model, f)
     barrier()
@@ -304,11 +333,14 @@ def train(model, criterion, train_loader, val_loader, optimizer, scheduler, teac
 
 def evaluate(model, loader, step):
     model.eval()
-    acc_fp = 0.
-    acc_q = 0.
+    fp_top1 = 0.
+    fp_top5 = 0.
+    q_top1 = 0.
+    q_top5 = 0.
 
     with torch.no_grad():
         for i, (img, label) in enumerate(loader):
+
             if "eval_vis" in CONF and CONF.eval_vis and i % 10 == 0:
                 model.vis(step * len(loader) + i)
 
@@ -317,10 +349,20 @@ def evaluate(model, loader, step):
             logits = model(img)
             # TODO: generalize this
             logits_fp, logits_q = logits
-            acc_fp += accuracy(logits_fp, label, WORLD_SIZE)
-            acc_q += accuracy(logits_q, label, WORLD_SIZE)
+            batch_fp_top1, batch_fp_top5 = accuracy(logits_fp, label, WORLD_SIZE, topk=CONF.topk)
+            batch_q_top1, batch_q_top5 = accuracy(logits_q, label, WORLD_SIZE, topk=CONF.topk)
+            fp_top1 += batch_fp_top1
+            fp_top5 += batch_fp_top5
+            q_top1 += batch_q_top1
+            q_top5 += batch_q_top5
 
-    return acc_fp / len(loader), acc_q / len(loader)
+    model.train()
+    fp_top1 /= len(loader)
+    fp_top5 /= len(loader)
+    q_top1 /= len(loader)
+    q_top5 /= len(loader)
+
+    return fp_top1, fp_top5, q_top1, q_top5
 
 
 if __name__ == "__main__":

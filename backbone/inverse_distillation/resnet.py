@@ -16,10 +16,11 @@ __all__ = ["resnet18_idq", "resnet50_idq"]
 
 class ResNetIDQ(ResNet):
 
-    def __init__(self, block, layers, num_classes=1000, bit_width=4, quant_all=True):
+    def __init__(self, block, layers, num_classes=1000, bit_width=4, quant_all=True, align_zero=True):
         super(ResNetIDQ, self).__init__(block, layers, num_classes)
         self.bit_width = bit_width
         self.quant_all = quant_all
+        self.align_zero = align_zero
         self.weight_quant_param = nn.ParameterDict()
         self.activation_quant_param = nn.ParameterDict()
         self.layer_names = dict()
@@ -85,12 +86,10 @@ class ResNetIDQ(ResNet):
         for h in handles:
             h.remove()
 
-    def get_param_group(self, **opt_conf):
-        weight_group = copy(opt_conf)
+    def get_param_group(self, weight_conf, quant_param_conf):
+        weight_group = copy(weight_conf)
+        quant_param_group = copy(quant_param_conf)
         weight_group["params"] = []
-        quant_param_group = copy(opt_conf)
-        quant_param_group["lr"] *= 0.01  # TODO: check this?
-        quant_param_group["weight_decay"] = 0.
         quant_param_group["params"] = []
 
         for n, p in self.named_parameters():
@@ -118,8 +117,8 @@ class ResNetIDQ(ResNet):
             x_lb = self.activation_quant_param[f"{name}_act_lb".replace(".", "_")]
             x_ub = self.activation_quant_param[f"{name}_act_ub".replace(".", "_")]
             w = m.weight.detach() if detach_w else m.weight
-            qw = fake_quant(w, w_lb, w_ub, self.bit_width)
-            qx = fake_quant(x, x_lb, x_ub, self.bit_width)
+            qw = fake_quant(w, w_lb, w_ub, self.bit_width, self.align_zero)
+            qx = fake_quant(x, x_lb, x_ub, self.bit_width, self.align_zero)
             return qx, qw
 
         def quant_conv2d_forward(m, x):

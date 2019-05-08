@@ -26,7 +26,7 @@ eval_vis: false
 arch: resnet18_idq
 arch_conf:
   bit_width: 4
-  quant_all: true
+  quant_all: false
   align_zero: false
 
 # loss
@@ -61,16 +61,16 @@ scheduler_conf:
 
 # checkpoint
 save_iter: *eval_n
-checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil/checkpoints
+checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil_not_q_all/checkpoints
 
 # logging
 log_iter: 25
 # vis_iter: 625
-tb_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil/tb_logs
+tb_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil_not_q_all/tb_logs
 
 # resume
 # resume_path: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
-resume_path: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil/checkpoints/ckpt_2019-05-07_19:18:08_final.pth # SH40
+resume_path: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil_not_q_all/checkpoints/ckpt_2019-05-07_19:35:21_final.pth # SH40
 resume_opt: true
 
 # distillation
@@ -80,7 +80,7 @@ calibration_steps: 25
 calibration_gamma: !!float 0.999
 
 # misc
-comment: "i4_inv_distil"
+comment: "res18_i4_not_q_all"
 update_bn: false
 topk: [1, 5]
 loss_divisor: 1

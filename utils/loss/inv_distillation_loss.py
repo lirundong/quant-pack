@@ -24,8 +24,8 @@ class InvDistilLoss(nn.Module):
             if self.soft_loss_type == "KL":
                 # manually batch_mean
                 batch_size = logits_fp.size(0)
-                soft_loss = F.kl_div(F.log_softmax(logits_fp / self.temperature, dim=1),
-                                     F.softmax(logits_q / self.temperature, dim=1),
+                soft_loss = F.kl_div(F.log_softmax(logits_q / self.temperature, dim=1),
+                                     F.softmax(logits_fp / self.temperature, dim=1),
                                      reduction="sum") \
                             / batch_size * pow(self.temperature, 2)
             elif self.soft_loss_type == "L2":
