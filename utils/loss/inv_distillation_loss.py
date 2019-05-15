@@ -20,6 +20,7 @@ class InvDistilLoss(nn.Module):
     def forward(self, logits_fp, logits_q, labels):
         if logits_q is None:
             soft_loss = torch.tensor(0., device=logits_fp.device)
+            hard_loss = F.cross_entropy(logits_fp, labels)
         else:
             if self.soft_loss_type == "KL":
                 # manually batch_mean
@@ -37,7 +38,7 @@ class InvDistilLoss(nn.Module):
                 cos_label = torch.ones(logits_fp.size(0), device=logits_fp.device)
                 soft_loss = F.cosine_embedding_loss(logits_fp, logits_q, cos_label)
 
-        soft_loss = soft_loss * self.soft_weight
-        hard_loss = F.cross_entropy(logits_fp, labels) * (1. - self.soft_weight)
+            soft_loss = soft_loss * self.soft_weight
+            hard_loss = F.cross_entropy(logits_fp, labels) * (1. - self.soft_weight)
 
         return soft_loss, hard_loss

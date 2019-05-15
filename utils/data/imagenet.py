@@ -44,11 +44,11 @@ class ImageNetDataset(Dataset):
         else:
             meta_file = f"{root_dir}/meta/val.txt"
         with open(meta_file, "r", encoding="utf-8") as f:
-            logger.info(f"building dataset from {meta_file}")
+            logger.debug(f"building dataset from {meta_file}")
             for line in f.readlines():
                 path, cls = line.strip().split()
                 self.metas.append((path, int(cls)))
-        logger.info("read meta done")
+        logger.debug("read meta done")
         self.mc_client = None
  
     def __len__(self):

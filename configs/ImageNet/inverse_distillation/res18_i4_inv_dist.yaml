@@ -69,9 +69,9 @@ log_iter: 25
 tb_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil/tb_logs
 
 # resume
-# resume_path: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
-resume_path: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil/checkpoints/ckpt_2019-05-07_19:18:08_final.pth # SH40
-resume_opt: true
+resume_path: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
+# resume_path: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil/checkpoints/ckpt_2019-05-07_19:18:08_final.pth # SH40
+# resume_opt: true
 
 # distillation
 distillation: false
@@ -84,3 +84,4 @@ comment: "i4_inv_distil"
 update_bn: false
 topk: [1, 5]
 loss_divisor: 1
+enable_eval_quant: false

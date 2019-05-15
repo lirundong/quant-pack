@@ -81,7 +81,7 @@ class ResNetIDQ(ResNet):
             for step, (img, label) in enumerate(calibration_loader):
                 if step > calibration_steps:
                     break
-                _ = self(img.to(device, non_blocking=True), fp_only=True)
+                _ = self(img.to(device, non_blocking=True), enable_quant=False)
 
         for h in handles:
             h.remove()
@@ -100,7 +100,7 @@ class ResNetIDQ(ResNet):
 
         return weight_group, quant_param_group
 
-    def forward(self, inputs, fp_only=False, update_stat=False):
+    def forward(self, inputs, enable_quant=True, update_stat=False):
 
         def do_fake_quant(m, x, detach_w=False, gamma=0.999):  # TODO: add this to interface
             name = self.layer_names[id(m)]
@@ -148,12 +148,12 @@ class ResNetIDQ(ResNet):
                     m.forward = MethodType(nn.Linear.forward, m)
 
         logits_fp = super(ResNetIDQ, self).forward(inputs)
-        if fp_only:
-            logits_q = None
-        else:
+        if enable_quant:
             prepare_quant_forward()
             logits_q = super(ResNetIDQ, self).forward(inputs)
             recover_fp_forward()
+        else:
+            logits_q = None
 
         return logits_fp, logits_q
 

@@ -11,7 +11,7 @@ train_data_conf:
   num_workers: 2
 train_samper_conf:
   batch_size: *n
-  total_epoch: &e 90
+  total_epoch: &e 30
 val_data_conf:
   batch_size: *n
   shuffle: false
@@ -19,7 +19,7 @@ val_data_conf:
   num_workers: 1
 
 # validation setting
-eval_iter: &eval_n 625
+eval_iter: &eval_n 300 # 625 # TODO: recover this
 eval_vis: false
 
 # models
@@ -40,7 +40,7 @@ loss_args:
 # warmup: LR 0.2 -> 0.8 in 4 epochs
 weight_opt: SGD
 weight_conf:
-  lr: 0.05
+  lr: 0.0005 # 0.05 # TODO: recover this!
   momentum: 0.9
   weight_decay: !!float 1e-4
   nesterov: true
@@ -56,22 +56,21 @@ scheduler_conf:
   milestones: [30, 60]
   gamma: 0.1
   batch_size: *n
-  warmup_epochs: 4
+  warmup_epochs: 0 # 4 # TODO: recover this!
   warmup_lr: 0.2
 
 # checkpoint
 save_iter: *eval_n
-checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil_scratch/checkpoints
+checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_alter_n/checkpoints
 
 # logging
-log_iter: 50
+log_iter: 25
 # vis_iter: 625
-tb_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil_scratch/tb_logs
+tb_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_alter_n/tb_logs
 
 # resume
-# resume_path: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
-resume_path: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil_scratch/checkpoints/ckpt_2019-05-09_16:24:57_final.pth
-resume_opt: true
+resume_path: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
+# resume_opt: true
 
 # distillation
 distillation: false
@@ -80,8 +79,10 @@ calibration_steps: 25
 calibration_gamma: !!float 0.999
 
 # misc
-comment: "i4_inv_distil"
+comment: "i4_alter_n"
 update_bn: false
 topk: [1, 5]
 loss_divisor: 1
-quant_enable_step: -1 # first LR milestone
+quant_enable_step: 1
+enable_eval_quant: false
+alter_length: 25

@@ -49,7 +49,11 @@ def accuracy(output: TensorT, target: TensorT, world_size: int = 1,
     with torch.no_grad():
         if not torch.is_tensor(output):
             output = output[-1]
-        batch_size = target.size(0)
+
+        batch_size = torch.tensor(target.size(0), device=output.device).float()
+        if world_size > 1:
+            link.allreduce(batch_size)
+
         top_logits, pred = output.topk(k=maxk, dim=1, largest=True, sorted=True)
         if debug:
             logits_diff = top_logits[:, 0] - top_logits[:, 1]
@@ -59,14 +63,13 @@ def accuracy(output: TensorT, target: TensorT, world_size: int = 1,
             logger.debug(f"Top-3 logits diff: {diff_large_top}")
             logger.debug(f"Bottom-3 logits diff: {diff_small_top}")
         pred = pred.t()  # shape: (k, N)
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
+        correct = pred.eq(target.view(1, -1).expand_as(pred)).float()
+        if world_size > 1:
+            link.allreduce(correct)
 
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-            acc = correct_k.mul_(100.0 / batch_size)
-            if world_size > 1:
-                link.allreduce(acc)
-                acc.div_(world_size)
+            correct_k = correct[:k].view(-1).sum(0, keepdim=True)
+            acc = correct_k.mul_(100.0).div_(batch_size)
             accs.append(acc.item())
     return accs
 

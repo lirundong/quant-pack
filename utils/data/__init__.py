@@ -27,6 +27,7 @@ _train_transforms = {
     "ImageNet": transforms.Compose([
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
+        transforms.ColorJitter(0.2, 0.2, 0.2, 0.1),
         transforms.ToTensor(),
         _normalize_rgb,
     ]),
