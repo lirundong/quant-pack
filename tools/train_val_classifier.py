@@ -40,7 +40,7 @@ def main():
     parser = ArgumentParser(f"Probabilistic quantization neural networks.")
     parser.add_argument("--conf-path", help="path of configuration file")
     parser.add_argument("--evaluate", "-e", action="store_true", help="evaluate trained model")
-    parser.add_argument("--quant", "-q", action="store_true", help="evaluate trained model")
+    # parser.add_argument("--quant", "-q", action="store_true", help="evaluate trained model")
     parser.add_argument("--extra", "-x", type=json.loads, help="extra configurations in json format")
     parser.add_argument("--comment", "-m", help="comment for each experiment")
     parser.add_argument("--debug", action="store_true", help="logging debug info")
@@ -48,9 +48,10 @@ def main():
 
     with open(args.conf_path, "r", encoding="utf-8") as f:
         CONF = yaml.load(f)
-        CONF.update({k: v for k, v in vars(args).items() if v is not None})
+        cli_conf = {k: v for k, v in vars(args).items() if k != "extra" and not k.startswith("__")}
+        update_config(CONF, cli_conf)
         if args.extra is not None:
-            CONF.update(args.extra)
+            update_config(CONF, args.extra)
         CONF = edict(CONF)
 
     RANK, WORLD_SIZE = dist_init()
@@ -81,14 +82,14 @@ def main():
     # logger.debug(f"model quantization: {CONF.quant}")
 
     # TODO: better `param_groups` interface?
-    # optimizer = optim.__dict__[CONF.opt](model.opt_param_groups(CONF.opt_prob, CONF.denoise_only, CONF.bounds_only,
-    #                                                             **CONF.opt_conf),
-    #                                      **CONF.opt_conf)
     weight_group, quant_param_group = model.get_param_group(CONF.weight_conf, CONF.quant_param_conf)
     # TODO: wrap these two optimizers into one, with conferable schedule
     weight_opt = optim.__dict__[CONF.weight_opt](**weight_group)
     quant_param_opt = optim.__dict__[CONF.quant_param_opt](**quant_param_group)
-    scheduler = IterationScheduler(weight_opt, dataset_size=len(train_set), world_size=WORLD_SIZE, **CONF.scheduler_conf)
+    global_opt = QuantParamWeightOpt(weight_opt, quant_param_opt,
+                                     debug=CONF.debug, world_size=WORLD_SIZE, **CONF.global_opt_conf)
+    scheduler = IterationScheduler(weight_opt,
+                                   dataset_size=len(train_set), world_size=WORLD_SIZE, **CONF.scheduler_conf)
 
     if CONF.debug:
         num_params = 0
@@ -112,8 +113,9 @@ def main():
             model.reset_boundaries()
         if CONF.get("resume_opt"):
             logger.debug(f"recovering optimizer...")
-            weight_opt.load_state_dict(checkpoint["opt"])
-            quant_param_opt.load_state_dict(checkpoint["quant_opt"])
+            # weight_opt.load_state_dict(checkpoint["opt"])
+            # quant_param_opt.load_state_dict(checkpoint["quant_opt"])
+            global_opt.load_state_dict(checkpoint["opt"])
             BEST_ACCURACY = checkpoint["accuracy"]
             scheduler.load_state_dict(checkpoint["scheduler"])
             logger.debug(f"recovered opt at iteration: {scheduler.last_iter}")
@@ -130,7 +132,7 @@ def main():
     logger.debug(f"building criterion {CONF.loss}...")
     criterion = get_loss(CONF.loss, **CONF.loss_args)
 
-    if CONF.get("tb_dir") and RANK == 0:
+    if CONF.get("tb_dir") and RANK == 0 and not CONF.evaluate:
         # TODO: vis interface for inv-distillation models
         tb_dir = os.path.join(CONF.tb_dir, f"{EXP_DATETIME}_{CONF.comment}")
         logger.debug(f"creating TensorBoard at: {tb_dir}...")
@@ -160,25 +162,14 @@ def main():
         logger.info(f"[Step {step:6d}]: val_q_top5={eval_q_top5:.3f}%")
         return
 
-    train(model, criterion, train_loader, val_loader, weight_opt, quant_param_opt, scheduler, teacher)
+    train(model, criterion, train_loader, val_loader, global_opt, scheduler, teacher)
 
 
-def train(model, criterion, train_loader, val_loader, weight_opt, quant_param_opt, scheduler, teacher_model=None):
+def train(model, criterion, train_loader, val_loader, global_opt, scheduler, teacher_model=None):
 
     def barrier():
         if CONF.dist:
             link.barrier()
-
-    def enabled_optimizer():
-        if quant_enabled:
-            alter_n = int(CONF.get("alter_length", 1))
-            div = i // alter_n
-            if div % 2 == 0:
-                return weight_opt
-            else:
-                return quant_param_opt
-        else:
-            return weight_opt
 
     global BEST_ACCURACY
     logger = logging.getLogger("global")
@@ -206,7 +197,9 @@ def train(model, criterion, train_loader, val_loader, weight_opt, quant_param_op
         scheduler.step()
         step = scheduler.last_iter
         quant_enabled = quant_enable_step <= step
-        opt = enabled_optimizer()
+        log_enabled = i % CONF.log_iter == 0
+        get_grad_norm = CONF.debug and quant_enabled and log_enabled
+        opt = global_opt.enabled_optimizer(step, quant_enabled)
         img = img.to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)
 
@@ -217,10 +210,10 @@ def train(model, criterion, train_loader, val_loader, weight_opt, quant_param_op
             logger.debug(f"LR milestones: {scheduler.milestones} steps.")
             logger.debug(f"enable quant-loss at step {quant_enable_step}.")
 
-        if CONF.quant and "vis_iter" in CONF and i % CONF.vis_iter == 0 and RANK == 0:
-            model.vis(step)
-            if teacher_model is not None:
-                teacher_model.vis(step)
+        # if CONF.quant and "vis_iter" in CONF and i % CONF.vis_iter == 0 and RANK == 0:
+        #     model.vis(step)
+        #     if teacher_model is not None:
+        #         teacher_model.vis(step)
 
         if teacher_model is not None:
             with torch.no_grad():
@@ -240,24 +233,22 @@ def train(model, criterion, train_loader, val_loader, weight_opt, quant_param_op
         logits = model(img, enable_quant=quant_enabled)
 
         if teacher_model is not None:
-            soft_loss, hard_loss = criterion(logits, label, teacher_logits)
+            hard_loss, soft_loss = criterion(logits, label, teacher_logits)
             loss = soft_loss + hard_loss
         elif CONF.inv_distillation:
             logits_fp, logits_q = logits
-            soft_loss, hard_loss = criterion(logits_fp, logits_q, label)
-            loss = soft_loss + hard_loss
+            hard_loss, soft_loss = criterion(logits_fp, logits_q, label)
+            if get_grad_norm:
+                loss, hard_grad_norm, soft_grad_norm = global_opt.backward(hard_loss, soft_loss, get_grad_norm=True)
+            else:
+                loss = global_opt.backward(hard_loss, soft_loss)
         else:
             loss = criterion(logits, label)
-        loss = loss / WORLD_SIZE / CONF.loss_divisor
-
-        # TODO: check this?
-        opt.zero_grad()
-
-        loss.backward()
-        if CONF.dist:
-            link.synchronize()
-
-        # TODO: check this?
+        # loss = loss / WORLD_SIZE / CONF.loss_divisor
+        # opt.zero_grad()
+        # loss.backward()
+        # if CONF.dist:
+        #     link.synchronize()
         opt.step()
 
         # TODO: generalize this
@@ -269,10 +260,11 @@ def train(model, criterion, train_loader, val_loader, weight_opt, quant_param_op
         train_q_top5.set(batch_q_top5)
         t_iter.set(time() - t0)
 
-        if i % CONF.log_iter == 0:
-            lr = opt.param_groups[0]["lr"]
+        if log_enabled:
+            lr_w, lr_q = global_opt.get_lr()
             eta = get_eta(step, len(train_loader), t_iter.avg())
-            logger.info(f"[Step {i:6d} / {len(train_loader):6d}]: LR={lr:.4f}, "
+            logger.info(f"[Step {i:6d} / {len(train_loader):6d}]: "
+                        f"LR={{weight: {lr_w:.4f}, quant_param: {lr_q:.4f}}}, "
                         f"hard_loss={hard_loss.item():.3f}, "
                         f"soft_loss={soft_loss.item():.3f}, "
                         f"fp_top1={train_fp_top1.avg():.3f}%, "
@@ -280,21 +272,24 @@ def train(model, criterion, train_loader, val_loader, weight_opt, quant_param_op
                         f"iter_time={t_iter.avg():.3f}s, "
                         f"data_time={t_data:.3f}s, ETA={eta}")
             if TB_LOGGER is not None:
-                TB_LOGGER.add_scalar("train/loss/all", loss.item(), step)
+                TB_LOGGER.add_scalar("train/loss/all", loss, step)
                 TB_LOGGER.add_scalar("train/loss/cross_entropy", hard_loss.item(), step)
                 TB_LOGGER.add_scalar("train/loss/soft_KL", soft_loss.item(), step)
                 TB_LOGGER.add_scalar("train/fp_top1", train_fp_top1.avg(), step)
                 TB_LOGGER.add_scalar("train/fp_top5", train_fp_top5.avg(), step)
                 TB_LOGGER.add_scalar("train/quant_top1", train_q_top1.avg(), step)
                 TB_LOGGER.add_scalar("train/quant_top5", train_q_top5.avg(), step)
-                TB_LOGGER.add_scalar("train/learning_rate", lr, step)
-                if CONF.debug:
-                    grad_ratio = param_grad_ratio(model)
-                    for k, v in grad_ratio.items():
-                        TB_LOGGER.add_scalar(f"grad_ratio/{k}", v, step)
-                    for k, p in chain(model.weight_quant_param.named_parameters(),
-                                      model.activation_quant_param.named_parameters()):
-                        TB_LOGGER.add_scalar(f"quant_range/{k}", p.data.item(), step)
+                TB_LOGGER.add_scalar("train/learning_rate/weight", lr_w, step)
+                TB_LOGGER.add_scalar("train/learning_rate/quant_param", lr_q, step)
+                if get_grad_norm:
+                    # grad_ratio = param_grad_ratio(model)
+                    # for k, v in grad_ratio.items():
+                    #     TB_LOGGER.add_scalar(f"grad_ratio/{k}", v, step)
+                    # for k, p in chain(model.weight_quant_param.named_parameters(),
+                    #                   model.activation_quant_param.named_parameters()):
+                    #     TB_LOGGER.add_scalar(f"quant_range/{k}", p.data.item(), step)
+                    TB_LOGGER.add_scalar("grad_norm/hard_loss", hard_grad_norm, step)
+                    TB_LOGGER.add_scalar("grad_norm/soft_loss", soft_grad_norm, step)
             barrier()
 
         if i > 0 and i % CONF.eval_iter == 0:
@@ -313,8 +308,7 @@ def train(model, criterion, train_loader, val_loader, weight_opt, quant_param_op
                 BEST_ACCURACY = eval_q_top1 if quant_enabled else eval_fp_top1
                 best_model = {
                     "model": map_to_cpu(model.state_dict()),
-                    "opt": map_to_cpu(weight_opt.state_dict()),
-                    "quant_opt": map_to_cpu(quant_param_opt.state_dict()),
+                    "opt": map_to_cpu(global_opt.state_dict()),
                     "scheduler": map_to_cpu(scheduler.state_dict()),
                     "accuracy": BEST_ACCURACY,
                 }
@@ -336,8 +330,10 @@ def train(model, criterion, train_loader, val_loader, weight_opt, quant_param_op
         save_path = os.path.join(CONF.checkpoint_dir, f"ckpt_{EXP_DATETIME}_final.pth")
         with open(save_path, "wb") as f:
             torch.save(best_model, f)
+        logger.info(f"Training done at step {scheduler.last_iter}, "
+                    f"with best accuracy {BEST_ACCURACY:.3f}%, "
+                    f"checkpoint: {save_path}")
     barrier()
-    logger.info(f"Training done at step {scheduler.last_iter}, with best accuracy {BEST_ACCURACY:.3f}%.")
 
 
 def evaluate(model, loader, step, enable_quant=True):

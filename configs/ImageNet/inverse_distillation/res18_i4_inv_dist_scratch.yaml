@@ -32,7 +32,7 @@ arch_conf:
 # loss
 loss: InvDistilLoss
 loss_args:
-  soft_weight: 0.25
+  soft_weight: null # 0.25
   temperature: 1.0
   soft_loss_type: "KL"
 
@@ -49,6 +49,10 @@ quant_param_opt: Adam
 quant_param_conf:
   lr: 0.001
   weight_decay: 0.0
+
+global_opt_conf:
+  soft_loss_weight: 0.25
+  alter_step: 1
 
 # scheduler
 epochs: *e
@@ -70,8 +74,8 @@ tb_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil_scratch/tb_log
 
 # resume
 # resume_path: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
-resume_path: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil_scratch/checkpoints/ckpt_2019-05-09_16:24:57_final.pth
-resume_opt: true
+# resume_path: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil_scratch/checkpoints/ckpt_2019-05-09_16:24:57_final.pth
+# resume_opt: true
 
 # distillation
 distillation: false

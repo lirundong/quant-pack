@@ -17,6 +17,7 @@ def get_dist_module(model):
         assert len(self._hook_handles) == 0, "sync_grad hook already resisted"
         for i, (name, p) in enumerate(self.named_parameters()):
             if p.requires_grad:
+                # create dummy new leave, such that the gradients w.r.t. p are correctly accumulated
                 p_tmp = p.expand_as(p)
                 grad_acc = p_tmp.grad_fn.next_functions[0][0]
                 h = grad_acc.register_hook(self._make_hook(name, p, i))

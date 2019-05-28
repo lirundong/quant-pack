@@ -18,7 +18,7 @@ RListT = Tuple[float], List[float]
 
 _rank = 0
 __all__ = ["init_log", "accuracy", "map_to_cpu", "get_eta", "update_bn_stat",
-           "param_grad_ratio", "AverageMeter"]
+           "param_grad_ratio", "update_config", "AverageMeter"]
 
 
 def init_log(debug=False, rank=0):
@@ -135,6 +135,22 @@ def param_grad_ratio(model):
                 ratio_dict[n] = g_norm.div(p_norm.add(eps)).item()
 
     return ratio_dict
+
+
+def update_config(conf: dict, extra: dict) -> None:
+
+    def _update_item(c, k, v):
+        if "." in k:
+            tokens = k.split(".")
+            current_k, remain_k = tokens[0], ".".join(tokens[1:])
+            c.setdefault(current_k, dict())
+            _update_item(c[current_k], remain_k, v)
+        else:
+            c[k] = v
+            return
+
+    for k, v in extra.items():
+        _update_item(conf, k, v)
 
 
 class AverageMeter:
