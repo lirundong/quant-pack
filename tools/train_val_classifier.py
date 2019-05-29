@@ -40,7 +40,6 @@ def main():
     parser = ArgumentParser(f"Probabilistic quantization neural networks.")
     parser.add_argument("--conf-path", help="path of configuration file")
     parser.add_argument("--evaluate", "-e", action="store_true", help="evaluate trained model")
-    # parser.add_argument("--quant", "-q", action="store_true", help="evaluate trained model")
     parser.add_argument("--extra", "-x", type=json.loads, help="extra configurations in json format")
     parser.add_argument("--comment", "-m", help="comment for each experiment")
     parser.add_argument("--debug", action="store_true", help="logging debug info")
@@ -76,10 +75,7 @@ def main():
 
     logger.debug(f"building model `{CONF.arch}`...")
     model = backbone.__dict__[CONF.arch](**CONF.arch_conf).to(DEVICE, non_blocking=True)
-    # if CONF.quant:
-    #     model.quant()
     logger.debug(f"build model {model.__class__.__name__} done:\n{model}")
-    # logger.debug(f"model quantization: {CONF.quant}")
 
     # TODO: better `param_groups` interface?
     weight_group, quant_param_group = model.get_param_group(CONF.weight_conf, CONF.quant_param_conf)
@@ -91,14 +87,15 @@ def main():
     scheduler = IterationScheduler(weight_opt,
                                    dataset_size=len(train_set), world_size=WORLD_SIZE, **CONF.scheduler_conf)
 
-    if CONF.debug:
-        num_params = 0
-        opt_conf = []
-        for p in chain(weight_opt.param_groups, quant_param_opt.param_groups):
-            num_params += len(p["params"])
-            opt_conf.append({k: v for k, v in p.items() if k != "params"})
-        logger.debug(f"number of parameters: {num_params}")
-        logger.debug(f"optimizer conf:\n{pformat(opt_conf)}")
+    if CONF.dist:
+        logger.debug(f"register all_reduce gradient hooks to model...")
+        model = get_dist_module(model)
+
+    if CONF.get("tb_dir") and RANK == 0 and not CONF.evaluate:
+        tb_dir = os.path.join(CONF.tb_dir, f"{EXP_DATETIME}_{CONF.comment}")
+        logger.debug(f"creating TensorBoard at: {tb_dir}...")
+        os.makedirs(tb_dir, exist_ok=True)
+        TB_LOGGER = SummaryWriter(tb_dir)
 
     if CONF.get("resume_path"):
         logger.debug(f"loading checkpoint at: {CONF.resume_path}...")
@@ -132,23 +129,21 @@ def main():
     logger.debug(f"building criterion {CONF.loss}...")
     criterion = get_loss(CONF.loss, **CONF.loss_args)
 
-    if CONF.get("tb_dir") and RANK == 0 and not CONF.evaluate:
-        # TODO: vis interface for inv-distillation models
-        tb_dir = os.path.join(CONF.tb_dir, f"{EXP_DATETIME}_{CONF.comment}")
-        logger.debug(f"creating TensorBoard at: {tb_dir}...")
-        os.makedirs(tb_dir, exist_ok=True)
-        TB_LOGGER = SummaryWriter(tb_dir)
-        # model.register_vis(TB_LOGGER, "quant")
-        # if teacher is not None:
-        #     teacher.register_vis(TB_LOGGER, "teacher")
+    if CONF.debug:
+        num_params = 0
+        opt_conf = []
+        for p in chain(weight_opt.param_groups, quant_param_opt.param_groups):
+            num_params += len(p["params"])
+            opt_conf.append({k: v for k, v in p.items() if k != "params"})
+        logger.debug(f"number of parameters: {num_params}")
+        logger.debug(f"optimizer conf:\n{pformat(opt_conf)}")
 
-    if CONF.dist:
-        logger.debug(f"register all_reduce gradient hooks to model...")
-        model = get_dist_module(model)
+        logger.debug(f"building diagnoser with conf:\n{pformat(CONF.diagnose_args)}")
+        model = get_diagnoser(model, TB_LOGGER, **CONF.diagnose_args)
 
-    if CONF.update_bn:
-        logger.debug(f"updating BN statistics by unlabeled data")
-        update_bn_stat(model, train_loader)
+    # if CONF.update_bn:
+    #     logger.debug(f"updating BN statistics by unlabeled data")
+    #     update_bn_stat(model, train_loader)
 
     if CONF.evaluate:
         assert CONF.resume_path is not None, f"load state_dict before evaluating"

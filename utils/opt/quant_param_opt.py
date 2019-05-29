@@ -38,6 +38,8 @@ class QuantParamWeightOpt(object):
         self.world_size = world_size
         self.dist = world_size > 1
         self.debug = debug
+
+        # TODO: move these diagnose logic to relevant Diagnoser Tasks
         self.grad_source = "hard"  # `hard` or `soft`
         self.hard_grad_norm = 0.
         self.soft_grad_norm = 0.
