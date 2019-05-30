@@ -1,0 +1,110 @@
+# dataset
+dataset:
+  name: ImageNet
+  args:
+    root_dir: /mnt/lustre/share/images
+    color: true
+train_data_conf:
+  batch_size: &n 128
+  shuffle: false
+  pin_memory: true
+  num_workers: 2
+train_samper_conf:
+  batch_size: *n
+  total_epoch: &e 30
+val_data_conf:
+  batch_size: *n
+  shuffle: false
+  pin_memory: true
+  num_workers: 1
+
+# validation setting
+eval_iter: &eval_n 300 # 625 # TODO: recover this
+eval_vis: false
+
+# models
+arch: resnet18_idq
+arch_conf:
+  bit_width: 4
+  quant_all: true
+  align_zero: false
+
+# loss
+loss: InvDistilLoss
+loss_args:
+  soft_weight: null # 0.25
+  temperature: 1.0
+  soft_loss_type: "KL"
+
+# optimizers
+# warmup: LR 0.2 -> 0.8 in 4 epochs
+weight_opt: SGD
+weight_conf:
+  lr: 0.0005 # 0.05 # TODO: recover this!
+  momentum: 0.9
+  weight_decay: !!float 1e-4
+  nesterov: true
+
+quant_param_opt: Adam
+quant_param_conf:
+  lr: 0.001
+  weight_decay: 0.0
+
+global_opt_conf:
+  soft_loss_weight: 0.25
+  alter_step: 1
+
+# scheduler
+epochs: *e
+scheduler_conf:
+  milestones: [30, 60]
+  gamma: 0.1
+  batch_size: *n
+  warmup_epochs: 0 # 4 # TODO: recover this!
+  warmup_lr: 0.2
+
+# checkpoint
+save_iter: *eval_n
+checkpoint_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_diagnose/checkpoints
+
+# logging
+log_iter: 25
+# vis_iter: 625
+tb_dir: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_diagnose/tb_logs
+
+# resume
+resume_path: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
+# resume_path: /mnt/lustre/lirundong/Data/quant-prob/res18_i4_inv_distil/checkpoints/ckpt_2019-05-07_19:18:08_final.pth # SH40
+# resume_opt: true
+
+# distillation
+distillation: false
+inv_distillation: true
+calibration_steps: 25
+calibration_gamma: !!float 0.999
+
+# diagnose
+diagnose:
+  diagnoser:
+    type: VisDiagnoser
+    args:
+      enabled_layers: null  # TODO: move this argument to `task`s?
+
+  tasks:
+    - name: soft_grad_norm
+      type: AccGradNorm
+      args:
+        stage: tensor
+        frequency: 25
+    - name: hard_grad_norm
+      type: AccGradNorm
+      args:
+        stage: tensor
+        frequency: 25
+
+# misc
+comment: "i4_diagnose"
+update_bn: false
+topk: [1, 5]
+loss_divisor: 1
+quant_enable_step: 1

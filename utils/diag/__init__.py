@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 
 from . import diagnoser as _diagnoser
-from .registry import get_tasks
+from ._registry import get_tasks
 
-__all__ = ["get_diagnoser"]
+__all__ = ["get_diagnoser", "get_tasks"]
 
 
-def get_diagnoser(module, logger, diagnoser_type, tasks, diag_layers=None):
-    tasks = get_tasks(tasks)
-    diagnoser = _diagnoser.__dict__[diagnoser_type]
+def get_diagnoser(diagnoser_type, module, *diagnoser_args, **diagnoser_kwargs):
+    diagnoser = _diagnoser.__dict__[diagnoser_type](module, *diagnoser_args, **diagnoser_kwargs)
 
-    return diagnoser(module, logger, tasks, diag_layers)
+    return diagnoser

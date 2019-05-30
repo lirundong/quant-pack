@@ -138,8 +138,11 @@ def main():
         logger.debug(f"number of parameters: {num_params}")
         logger.debug(f"optimizer conf:\n{pformat(opt_conf)}")
 
-        logger.debug(f"building diagnoser with conf:\n{pformat(CONF.diagnose_args)}")
-        model = get_diagnoser(model, TB_LOGGER, **CONF.diagnose_args)
+        logger.debug(f"building diagnoser `{CONF.diagnose.diagnoser.type}` with conf: "
+                     f"\n{pformat(CONF.diagnose.diagnoser.args)}")
+        model = get_diagnoser(CONF.diagnose.diagnoser.type, model,
+                              logger=TB_LOGGER, **CONF.diagnose.diagnoser.args)
+        debug_tasks = get_tasks(model, CONF.diagnose.tasks)  # TODO: should we preserve these tasks?
 
     # if CONF.update_bn:
     #     logger.debug(f"updating BN statistics by unlabeled data")
@@ -225,6 +228,7 @@ def train(model, criterion, train_loader, val_loader, global_opt, scheduler, tea
             logger.info(f"[Step {step:6d}]: val_q_top1={eval_q_top1:.3f}%")
             logger.info(f"[Step {step:6d}]: val_q_top5={eval_q_top5:.3f}%")
 
+        model.update_task_state()  # TODO: wrap this
         logits = model(img, enable_quant=quant_enabled)
 
         if teacher_model is not None:
@@ -233,10 +237,11 @@ def train(model, criterion, train_loader, val_loader, global_opt, scheduler, tea
         elif CONF.inv_distillation:
             logits_fp, logits_q = logits
             hard_loss, soft_loss = criterion(logits_fp, logits_q, label)
-            if get_grad_norm:
-                loss, hard_grad_norm, soft_grad_norm = global_opt.backward(hard_loss, soft_loss, get_grad_norm=True)
-            else:
-                loss = global_opt.backward(hard_loss, soft_loss)
+            # if get_grad_norm:
+            #     loss, hard_grad_norm, soft_grad_norm = global_opt.backward(hard_loss, soft_loss, get_grad_norm=True)
+            # else:
+            #     loss = global_opt.backward(hard_loss, soft_loss)
+            loss = global_opt.backward(hard_loss, soft_loss)
         else:
             loss = criterion(logits, label)
         # loss = loss / WORLD_SIZE / CONF.loss_divisor
@@ -245,6 +250,7 @@ def train(model, criterion, train_loader, val_loader, global_opt, scheduler, tea
         # if CONF.dist:
         #     link.synchronize()
         opt.step()
+        model.step_done()  # TODO: wrap this
 
         # TODO: generalize this
         batch_fp_top1, batch_fp_top5 = accuracy(logits_fp, label, WORLD_SIZE, topk=CONF.topk)
@@ -276,15 +282,15 @@ def train(model, criterion, train_loader, val_loader, global_opt, scheduler, tea
                 TB_LOGGER.add_scalar("train/quant_top5", train_q_top5.avg(), step)
                 TB_LOGGER.add_scalar("train/learning_rate/weight", lr_w, step)
                 TB_LOGGER.add_scalar("train/learning_rate/quant_param", lr_q, step)
-                if get_grad_norm:
+                # if get_grad_norm:
                     # grad_ratio = param_grad_ratio(model)
                     # for k, v in grad_ratio.items():
                     #     TB_LOGGER.add_scalar(f"grad_ratio/{k}", v, step)
                     # for k, p in chain(model.weight_quant_param.named_parameters(),
                     #                   model.activation_quant_param.named_parameters()):
                     #     TB_LOGGER.add_scalar(f"quant_range/{k}", p.data.item(), step)
-                    TB_LOGGER.add_scalar("grad_norm/hard_loss", hard_grad_norm, step)
-                    TB_LOGGER.add_scalar("grad_norm/soft_loss", soft_grad_norm, step)
+                    # TB_LOGGER.add_scalar("grad_norm/hard_loss", hard_grad_norm, step)
+                    # TB_LOGGER.add_scalar("grad_norm/soft_loss", soft_grad_norm, step)
             barrier()
 
         if i > 0 and i % CONF.eval_iter == 0:

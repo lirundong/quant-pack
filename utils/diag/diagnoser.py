@@ -18,82 +18,105 @@ BkwdHookT = Callable[[ModuleT, TensorT, TensorT], Union[None, TensorT]]
 HookT = Union[PreFwdHookT, FwdHookT, BkwdHookT]
 
 
-# TODO: base class for Diagnoser
-class VisDiagnoser:
+class Diagnoser:
+    """Observable diagnose registry.
+
+    TODO:
+        - refactor this base-class into interface;
+    """
+
+    def __init__(self, module):
+        self.module = module
+
+        self.tasks = []
+        self.handles = []
+        self.call_counter = 0
+        self.enabled_layers = None
+
+    def register_task(self, task):
+        self.tasks.append(task)
+
+    def unregister_task(self, task):
+        self.tasks.remove(task)
+
+    def register_hooks(self):
+        # TODO: check `enabled_layers`
+        stage_hooks = defaultdict(list)
+
+        for task in self.tasks:
+            stage = task.stage
+            if stage == "pre_fwd":
+                hook = task.get_pre_fwd_hook()
+            elif stage == "fwd":
+                hook = task.get_fwd_hook()
+            elif stage == "bkwd":
+                hook = task.get_bkwd_hook()
+            else:
+                hook = task.get_tensor_hook()
+            stage_hooks[stage].append(hook)
+
+        for n, m in self.module.named_modules():
+            for hook in stage_hooks["pre_fwd"]:
+                h = m.register_forward_pre_hook(hook)
+                self.handles.append(h)
+            for hook in stage_hooks["fwd"]:
+                h = m.register_forward_hook(hook)
+                self.handles.append(h)
+            for hook in stage_hooks["bkwd"]:
+                h = m.register_backward_hook(hook)
+                self.handles.append(h)
+
+        for n, p in self.module.named_parameters():
+            for hook in stage_hooks["tensor"]:
+                h = p.register_hook(hook)
+                self.handles.append(h)
+
+    def remove_hooks(self):
+        for h in self.handles:
+            h.remove()
+        self.handles.clear()
+
+    def update_task_state(self, step=None):
+        if step is None:
+            step = self.call_counter
+
+        for task in self.tasks:
+            is_enabled = task.is_enabled_at(step)
+            task.is_enabled = is_enabled
+
+    def step_done(self, step=None):
+        if step is None:
+            step = self.call_counter
+
+        for task in self.tasks:
+            if task.step_done_required:
+                task.step_done(step)
+
+
+class VisDiagnoser(nn.Module, Diagnoser):
 
     def __init__(self,
                  module: ModuleT,
                  logger: SummaryWriter,
-                 tasks,
-                 diag_layers: Union[List[str], None] = None):
+                 enabled_layers: Union[List[str], None] = None):
         # TODO(Rundong):
         #   - [ ] support multiple input modules for comparision;
         #   - [x] make sure module-name mapping and enable flags are visible to diagnose hooks;
         #   - [ ] implement interactive diagnose methods;
         #   - [ ] correct signature for registry arguments
 
-        self.module = module
-        self.tasks = tasks
+        nn.Module.__init__(self)
+        Diagnoser.__init__(self, module)
+
         self.logger = logger
-        self.diag_layers = diag_layers
+        self.enabled_layers = enabled_layers
 
-        self.pre_fwd_hook_enabled = False
-        self.fwd_hook_enabled = False
-        self.bkwd_hook_enabled = False
-        self.diag_all_layers = self.diag_layers is None
-
-        self.handles = []
-        self.step_done_calls = []
-        self.call_counter = 0
-
-        self.register_hooks()
-
-    def register_hooks(self):
-
-        def _do_register(module, builder):
-            if stage_name == "pre_fwd":
-                func = builder.get_pre_fwd_hook()
-                h = module.register_forward_pre_hook(func)
-            elif stage_name == "fwd":
-                func = builder.get_fwd_hook()
-                h = module.register_forward_hook(func)
-            elif stage_name == "bkwd":
-                func = builder.get_bkwd_hook()
-                h = module.register_backward_hook(func)
-            else:
-                raise ValueError(f"unknown stage name: {stage_name}")
-
-            self.handles.append(h)
-            self.step_done_calls.append(builder.get_step_done())
-
-        for stage_name, stage_tasks in self.tasks.items():
-            assert stage_name in ("pre_fwd", "fwd", "bkwd")
-            for task_name, task_builder in stage_tasks.items():
-                builder = task_builder(self, self.logger)
-                for n, m in self.module.named_modules():
-                    if self.diag_all_layers or n in self.diag_layers:
-                        _do_register(m, builder)
-
-    def remove_hooks(self):
-        if len(self.handles) > 0:
-            for h in self.handles:
-                h.remove()
-
-    def forward(self, inputs, step):
-        ret = self.module(inputs)
-
-        if len(self.step_done_calls) > 0:
-            for step_done in self.step_done_calls:
-                step_done(step)
-
-        return ret
-
-    def __call__(self, inputs, step=None):
+    def forward(self, *args, **kwargs):
         self.call_counter += 1
-        if step is None:
-            step = self.call_counter
-
-        return self.forward(inputs, step)
+        return self.module(*args, **kwargs)
 
     def __getattr__(self, item):
-        return getattr(self.module, item)
+        try:
+            return super(VisDiagnoser, self).__getattr__(item)
+        except AttributeError:
+            return getattr(self.module, item)
