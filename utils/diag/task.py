@@ -61,10 +61,10 @@ class AccGradNorm(Task):
         else:
             return int(step) % self.frequency == 0
 
-    def step_done(self, step):
+    def step_done(self, step, logger):
         if self.is_enabled:
             g_norm = sqrt(self.grad_norm + self.eps)
-            self.tb_logger.add_scalar(self.task_name, g_norm, step)
+            logger.add_scalar(self.task_name, g_norm, step)
             self.grad_norm = 0.
 
     def get_tensor_hook(self):

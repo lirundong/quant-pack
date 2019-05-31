@@ -115,6 +115,14 @@ class VisDiagnoser(nn.Module, Diagnoser):
         self.call_counter += 1
         return self.module(*args, **kwargs)
 
+    def step_done(self, step=None):
+        if step is None:
+            step = self.call_counter
+
+        for task in self.tasks:
+            if task.step_done_required and self.logger is not None:
+                task.step_done(step, self.logger)
+
     def __getattr__(self, item):
         try:
             return super(VisDiagnoser, self).__getattr__(item)
