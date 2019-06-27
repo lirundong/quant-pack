@@ -1,0 +1,117 @@
+## Common args
+BATCH_SIZE_PER_GPU: &bs 128
+TOTAL_EPOCHS: &e 30
+
+## Dataset
+data:
+  dataset:
+    type: ImageNet
+    args:
+      img_dir: /mnt/lustre/share/images/
+      meta_dir: /mnt/lustre/lirundong/Data/Meta/imagenet_dev/
+      color: true
+  train_loader_conf:
+    batch_size: *bs
+    shuffle: false
+    pin_memory: true
+    num_workers: 2
+  train_sampler_conf:
+    batch_size: *bs
+    total_epoch: *e
+  val_loader_conf:
+    batch_size: *bs
+    shuffle: false
+    pin_memory: true
+    num_workers: 1
+
+## Strategy
+distil:
+  mode: null # {null, inv_distil, distil}
+  soft_w: null
+  hard_w: null
+  alter_step: &alter_n null
+
+quant:
+  bitwidth:
+    w: &qw 4
+    a: &qa 4
+  calib:
+    steps: 25
+    gamma: !!float 0.999
+  enable_at: null # never enable
+  align_zero: &qz false
+  all_layers: &q_all true
+
+## Models
+arch:
+  type: resnet18_idq
+  args:
+    num_classes: 200
+    kw: *qw
+    ka: *qa
+    quant_all: *q_all
+    align_zero: *qz
+
+## Training
+eval:
+  freq: 100
+  vis: false
+
+loss:
+  type: CrossEntropyLoss
+  args: {}
+  topk: [1, 5]
+
+## Optimization
+param_group:
+  conf:
+    - type: SGD
+      args: &sgd_args
+        lr: 0.005
+        momentum: 0.9
+        weight_decay: !!float 1e-4
+        nesterov: true
+    - type: Adam
+      args: &adam_args
+        lr: 0.001
+        weight_decay: 0.0
+  groups:
+    - <<: *sgd_args
+    - <<: *adam_args
+  args:
+    finetune: true # IMPORTANT: only tune fc layers
+
+opt:
+  args:
+    alter_step: *alter_n
+
+schedule:
+  args:
+    milestones: [15, 25]
+    gamma: 0.1
+    batch_size: *bs
+    warmup_epochs: 1
+    warmup_lr: 0.005
+
+## Resume and snapshot
+ckpt:
+  freq: 300
+  dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/baseline_ft/checkpoints/
+
+resume:
+  path: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
+  load_opt: false
+
+## Diagnose
+logging:
+  freq: 25
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/baseline_ft/tb_logs/
+
+diagnose:
+  diagnoser:
+    type: null
+    args: {}
+  tasks: []
+
+## Misc
+comment: "baseline_ft"

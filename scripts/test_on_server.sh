@@ -19,6 +19,7 @@ do
 done
 
 T=`date +%Y%m%d-%H-%M-%S`
+PORT=`shuf -i 12000-20000 -n 1`
 ROOT=..
 
 if [[ ! -f $ROOT/configs/${CONF_NAME}.yaml ]]; then
@@ -31,17 +32,18 @@ else
 fi
 
 source $HOME/.local/bin/env_spring.sh
-source activate r0.2.1
+# source activate r0.2.1
+source activate torch-1.1-cuda-9.0
 
 export PYTHONPATH=$ROOT:$PYTHONPATH
 
 GLOG_vmodule=MemcachedClient=-1 srun \
-   --mpi=pmi2 -p ${PART} -n${NUM_JOBS} \
-   --gres=gpu:${GREP_GPU} --ntasks-per-node=${GREP_GPU} \
-   --job-name=${JOB_NAME} \
-   --kill-on-bad-exit=1 \
+  --mpi=pmi2 -p ${PART} -n${NUM_JOBS} \
+  --gres=gpu:${GREP_GPU} --ntasks-per-node=${GREP_GPU} \
+  --job-name=${JOB_NAME} \
+  --kill-on-bad-exit=1 \
 python $ROOT/tools/train_val_classifier.py \
   --evaluate \
   --conf-path ${CONF_FILE} \
-  ${EXTRA} \
-  2>&1 | tee test_${JOB_NAME}_${T}.log
+  --port ${PORT} \
+  ${EXTRA}

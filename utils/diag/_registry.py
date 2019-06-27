@@ -51,6 +51,7 @@ def get_tasks(diagnoser, task_conf):
         task = task_builder(diagnoser, name, **args)
         tasks.append(task)
 
-    diagnoser.register_hooks()
+    if len(tasks) > 0:
+        diagnoser.register_hooks()
 
     return tasks

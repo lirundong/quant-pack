@@ -11,8 +11,6 @@ __all__ = ["IterationSampler"]
 class IterationSampler(Sampler):
     def __init__(self, dataset, batch_size, total_iter=None, total_epoch=None,
                  last_iter=None, last_epoch=None, rank=0, world_size=1, seed=19260817):
-        super(IterationSampler, self).__init__(None)
-
         assert not all(i is not None for i in (total_iter, total_epoch)), \
             f"total_iter and total_epoch can't be both set"
         assert not all(i is not None for i in (last_iter, last_epoch)), \

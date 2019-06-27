@@ -10,7 +10,7 @@ __all__ = ["get_dataset", "IterationSampler"]
 
 _dataset_zoo = {
     "CIFAR100Sub": CIFAR100Sub,
-    "ImageNet": ImageNetDataset,
+    "ImageNetST": ImageNetDataset,
 }
 _dataset_zoo.update({k: v for k, v in vars(datasets).items()
                      if not k.startswith("__")})
@@ -24,7 +24,7 @@ _train_transforms = {
         transforms.ToTensor(),
         _normalize_rgb,
     ]),
-    "ImageNet": transforms.Compose([
+    "ImageNetST": transforms.Compose([
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ColorJitter(0.2, 0.2, 0.2, 0.1),
@@ -37,7 +37,7 @@ _test_transforms = {
         transforms.ToTensor(),
         _normalize_rgb,
     ]),
-    "ImageNet": transforms.Compose([
+    "ImageNetST": transforms.Compose([
         transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),

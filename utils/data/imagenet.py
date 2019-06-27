@@ -32,17 +32,17 @@ def read_img_by_pil(img_path, color, mc_client=None):
 
 
 class ImageNetDataset(Dataset):
-    def __init__(self, root_dir, train, color=True, transform=None):
+    def __init__(self, img_dir, meta_dir, train, color=True, transform=None):
         logger = logging.getLogger("global")
-        self.root_dir = root_dir
+        self.img_dir = img_dir
         self.train = train
         self.transform = transform
         self.color = color
         self.metas = []
         if self.train:
-            meta_file = f"{root_dir}/meta/train.txt"
+            meta_file = os.path.join(meta_dir, "train.txt")
         else:
-            meta_file = f"{root_dir}/meta/val.txt"
+            meta_file = os.path.join(meta_dir, "val.txt")
         with open(meta_file, "r", encoding="utf-8") as f:
             logger.debug(f"building dataset from {meta_file}")
             for line in f.readlines():
@@ -60,9 +60,9 @@ class ImageNetDataset(Dataset):
                 "/mnt/lustre/share/memcached_client/server_list.conf",
                 "/mnt/lustre/share/memcached_client/client.conf")
         if self.train:
-            filename = os.path.join(self.root_dir, 'train', self.metas[idx][0])
+            filename = os.path.join(self.img_dir, 'train', self.metas[idx][0])
         else:
-            filename = os.path.join(self.root_dir, 'val', self.metas[idx][0])
+            filename = os.path.join(self.img_dir, 'val', self.metas[idx][0])
         cls = self.metas[idx][1]
         img = read_img_by_pil(filename, self.color, self.mc_client)
 

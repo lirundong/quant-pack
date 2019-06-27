@@ -2,7 +2,6 @@
 
 import collections
 
-from torch.optim import Optimizer
 
 __all__ = ["IterationScheduler"]
 
@@ -10,8 +9,6 @@ __all__ = ["IterationScheduler"]
 class IterationScheduler(object):
     def __init__(self, optimizer, milestones, dataset_size, batch_size,
                  warmup_epochs=0, warmup_lr=0, world_size=1, gamma=0.1, last_iter=-1):
-        if not isinstance(optimizer, Optimizer):
-            raise TypeError('{} is not an Optimizer'.format(type(optimizer).__name__))
         self.optimizer = optimizer
         batch_size *= world_size
         epoch_size = dataset_size // batch_size
@@ -38,8 +35,8 @@ class IterationScheduler(object):
         self.gamma = gamma
         self.last_iter = last_iter
         self.in_warmup = self.last_iter < self.warmup_iters
-        self.next_milestone = min([m for m in self.milestones if m >= last_iter])
-
+        remain_milestones = [m for m in self.milestones if m >= last_iter]
+        self.next_milestone = min(remain_milestones) if len(remain_milestones) > 0 else None
         self.step(last_iter + 1)
 
     def state_dict(self):

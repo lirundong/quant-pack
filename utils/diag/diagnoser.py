@@ -22,6 +22,7 @@ class Diagnoser:
     """Observable diagnose registry.
 
     TODO:
+        - (priority) check whether `module` is DDP
         - refactor this base-class into interface;
     """
 
