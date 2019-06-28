@@ -8,10 +8,10 @@ __all__ = ["IterationScheduler"]
 
 class IterationScheduler(object):
     def __init__(self, optimizer, milestones, dataset_size, batch_size,
-                 warmup_epochs=0, warmup_lr=0, world_size=1, gamma=0.1, last_iter=-1):
-        self.optimizer = optimizer
+                 warmup_epochs=0, warmup_lr=0, world_size=1, gamma=0.1,
+                 last_iter=-1, enable_quant_at=None, verbose=False):
         batch_size *= world_size
-        epoch_size = dataset_size // batch_size
+        iters_per_epoch = dataset_size // batch_size
         if last_iter == -1:
             for group in optimizer.param_groups:
                 group.setdefault('initial_lr', group['lr'])
@@ -26,18 +26,46 @@ class IterationScheduler(object):
         else:
             self.base_lrs = list(map(lambda group: group['initial_lr'], optimizer.param_groups))
         self.target_lrs = list(map(lambda group: group['initial_lr'] * world_size, optimizer.param_groups))
+
         if not isinstance(milestones, collections.Iterable):
             milestones = [milestones, ]
-        self.milestones = [m * epoch_size for m in milestones]
-        self.warmup_iters = warmup_epochs * epoch_size
-        self.epoch_size = epoch_size
+
+        self.milestones = [m * iters_per_epoch for m in milestones]
+        self.warmup_iters = warmup_epochs * iters_per_epoch
+        self.iters_per_epoch = iters_per_epoch
         self.world_size = world_size
         self.gamma = gamma
+        self.optimizer = optimizer
         self.last_iter = last_iter
         self.in_warmup = self.last_iter < self.warmup_iters
-        remain_milestones = [m for m in self.milestones if m >= last_iter]
-        self.next_milestone = min(remain_milestones) if len(remain_milestones) > 0 else None
+
+        if enable_quant_at is not None:
+            self.enable_quant_at = self.milestones[enable_quant_at]
+        else:
+            self.enable_quant_at = None
+
+        self._update_next_milestone()
         self.step(last_iter + 1)
+
+        if verbose:
+            from logging import getLogger
+            logger = getLogger("global")
+            logger.info(str(self))
+
+    def _update_next_milestone(self):
+        remain_milestones = [m for m in self.milestones if m >= self.last_iter]
+        self.next_milestone = min(remain_milestones) if len(remain_milestones) > 0 else None
+
+    def __str__(self):
+        info_tokens = [f"milestone iters: {self.milestones}", ]
+        if self.warmup_iters > 0:
+            info_tokens += [f"warmup iters: {self.warmup_iters}",
+                            f"LR before warmup: {self.base_lrs}",
+                            f"LR after warmup: {self.target_lrs}"]
+        if self.enable_quant_at is not None:
+            info_tokens += [f"enable quantization at iter {self.enable_quant_at}"]
+
+        return "\n".join(info_tokens)
 
     def state_dict(self):
         return {key: value for key, value in self.__dict__.items() if key != 'optimizer'}
@@ -70,10 +98,21 @@ class IterationScheduler(object):
         if self.next_milestone is None or self.last_iter < self.next_milestone:
             return
 
-        remain_milestones = [m for m in self.milestones if m > self.last_iter]
-        if len(remain_milestones) > 0:
-            self.next_milestone = min(remain_milestones)
-        else:
-            self.next_milestone = None
+        self._update_next_milestone()
         for param_group in self.optimizer.param_groups:
             param_group['lr'] *= self.gamma
+
+    @property
+    def quant_enabled(self):
+        if self.enable_quant_at is not None and self.last_iter >= self.enable_quant_at:
+            return True
+        else:
+            return False
+
+    @property
+    def do_calibration(self):
+        if self.enable_quant_at is not None and self.last_iter == self.enable_quant_at:
+            return True
+        else:
+            return False
+

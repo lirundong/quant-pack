@@ -10,24 +10,28 @@ import torch
 __all__ = ["accuracy", "get_eta", "update_config", "Checkpointer"]
 
 
+@torch.no_grad()
 def accuracy(output, target, topk=(1,)):
-    if output is None:
-        assert torch.is_tensor(target)
-        return [torch.tensor(0., device=target.device), ] * len(topk)
+    assert torch.is_tensor(target)
+    if torch.is_tensor(output):
+        output = (output, )
+    maxk = max(topk)
+    batch_size = target.size(0)
+    results = []
+    for logits in output:
+        if logits is None:
+            res = [torch.tensor(0., device=target.device), ] * len(topk)
+        else:
+            res = []
+            _, pred = logits.topk(maxk, 1, True, True)
+            pred = pred.t()
+            correct = pred.eq(target[None])
+            for k in topk:
+                correct_k = correct[:k].flatten().sum(dtype=torch.float32)
+                res.append(correct_k * (100.0 / batch_size))
+        results.append(res)
 
-    with torch.no_grad():
-        maxk = max(topk)
-        batch_size = target.size(0)
-
-        _, pred = output.topk(maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(target[None])
-
-        res = []
-        for k in topk:
-            correct_k = correct[:k].flatten().sum(dtype=torch.float32)
-            res.append(correct_k * (100.0 / batch_size))
-        return res
+    return results
 
 
 def get_eta(gone_steps, total_steps, speed):

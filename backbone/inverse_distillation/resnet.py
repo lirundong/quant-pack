@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import math
 from copy import copy
 from types import MethodType
 from logging import getLogger
@@ -7,6 +8,7 @@ from logging import getLogger
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.init as init
 from torch.nn import Parameter
 from torchvision.models.resnet import ResNet, BasicBlock, Bottleneck
 
@@ -26,7 +28,17 @@ class ResNetIDQ(ResNet):
         self.weight_quant_param = nn.ParameterDict()
         self.activation_quant_param = nn.ParameterDict()
         self.layer_names = dict()
+        self.reset_weight_param()
         self.init_quant_param()
+
+    def reset_weight_param(self):
+        for m in self.modules():
+            if isinstance(m, (nn.Conv2d, nn.Linear)):
+                init.kaiming_uniform_(m.weight, a=math.sqrt(5))
+                if m.bias is not None:
+                    fan_in, _ = init._calculate_fan_in_and_fan_out(m.weight)
+                    bound = 1 / math.sqrt(fan_in)
+                    init.uniform_(m.bias, -bound, bound)
 
     def init_quant_param(self):
         for n, m in self.named_modules():
@@ -100,7 +112,7 @@ class ResNetIDQ(ResNet):
                     ft_layers = (ft_layers, )
 
                 logger = getLogger("global")
-                if any(n in l for l in ft_layers) and "quant_param" not in n:
+                if any(l in n for l in ft_layers) and "quant_param" not in n:
                     weight_group["params"].append(p)
                     logger.debug(f"finetune: add {n} into optimizer")
                 else:

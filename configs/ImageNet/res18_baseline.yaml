@@ -38,7 +38,7 @@ quant:
   calib:
     steps: 25
     gamma: !!float 0.999
-  enable_at: null # never enable
+  enable_at: &enable_q null # never enable
   align_zero: &qz false
   all_layers: &q_all true
 
@@ -93,6 +93,7 @@ schedule:
     batch_size: *bs
     warmup_epochs: 4
     warmup_lr: 0.05
+    enable_quant_at: *enable_q
 
 ## Resume and snapshot
 ckpt:

@@ -93,7 +93,7 @@ def main():
         model_without_ddp = model
 
     if CONF.log.tb_dir is not None and RANK == 0 and not CONF.evaluate_only:
-        tb_dir = f"{EXP_DATETIME}_{CONF.comment}" if CONF.comment is not None else f"{EXP_DATETIME}"
+        tb_dir = f"{EXP_DATETIME}_{CONF.comment}" if CONF.comment is not "" else f"{EXP_DATETIME}"
         tb_dir = os.path.join(CONF.log.tb_dir, tb_dir)
         logger.debug(f"creating TensorBoard at: {tb_dir}...")
         os.makedirs(tb_dir, exist_ok=True)
@@ -119,6 +119,8 @@ def main():
         logger.debug("building FP teacher model...")
         teacher = deepcopy(model_without_ddp)
         teacher.to(DEVICE, non_blocking=True)
+        for p in teacher.parameters():
+            p.requires_grad = False
     else:
         teacher = None
 
@@ -141,8 +143,7 @@ def main():
         get_tasks(model, CONF.diagnose.tasks)  # TODO: should we preserve these tasks?
 
     if CONF.evaluate_only:
-        step = scheduler.last_iter
-        logger.info(f"[Step {step}]: evaluating...")
+        logger.info(f"[Step {scheduler.last_iter}]: evaluating...")
         evaluate(model, val_loader, CONF.eval.quant, verbose=True)
         return
 
@@ -158,28 +159,16 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
     metric_logger.add_meter("loss", SmoothedValue(fmt="{value:.4f}"))
     model.train()
 
-    if CONF.quant.enable_at is None:
-        quant_enable_step = len(train_loader) * 2
-    elif CONF.quant.enable_at > 0:
-        quant_enable_step = CONF.quant.enable_at
-    else:
-        quant_enable_step = scheduler.milestones[CONF.quant.enable_at]
-    logger.debug(f"enable quantization loss at step: {quant_enable_step}")
-
     for img, label in metric_logger.log_every(train_loader, CONF.log.freq,
                                               log_prefix="train", progress_bar=CONF.progress_bar):
         scheduler.step()
         step = scheduler.last_iter
-        quant_enabled = quant_enable_step <= step
 
         img = img.to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)
+        logits = model(img, enable_quant=scheduler.quant_enabled)
 
-        if CONF.distil.mode == "distil":
-            with torch.no_grad():
-                teacher_logits = teacher_model(img)
-
-        if CONF.distil.mode == "inv_distil" and step == quant_enable_step:
+        if CONF.distil.mode == "inv_distil" and scheduler.do_calibration:
             # logger.debug(f"resetting quantization ranges at iteration {scheduler.last_iter}...")
             # model.update_weight_quant_param()
             # model.update_activation_quant_param(train_loader, CONF.quant.calib.steps, CONF.quant.calib.gamma)
@@ -188,23 +177,22 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             # evaluate(model, val_loader, step, verbose=True)
             pass  # TODO: wrap this
 
-        logits_fp, logits_q = model(img, enable_quant=quant_enabled)
-
         if CONF.distil.mode == "distil":
-            hard_loss, soft_loss = criterion(logits_q, label, teacher_logits)
+            with torch.no_grad():
+                teacher_logits = teacher_model(img)
+            hard_loss, soft_loss = criterion(logits, teacher_logits, label)
             loss = soft_loss + hard_loss
         elif CONF.distil.mode == "inv_distil":
-            hard_loss, soft_loss = criterion(logits_fp, logits_q, label)
+            hard_loss, soft_loss = criterion(*logits, label)
             loss = hard_loss * CONF.distil.hard_w + soft_loss * CONF.distil.soft_w
         else:
-            loss = criterion(logits_fp, label)
+            loss = criterion(logits[0], label)
 
         opt.zero_grad()
         loss.backward()
         opt.step()
 
-        fp_top1, fp_top5 = accuracy(logits_fp, label, topk=CONF.loss.topk)
-        q_top1, q_top5 = accuracy(logits_q, label, topk=CONF.loss.topk)
+        (fp_top1, fp_top5), (q_top1, q_top5) = accuracy(logits, label, topk=CONF.loss.topk)
 
         n = img.size(0)
         metric_logger.update(
@@ -219,7 +207,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
         if step % CONF.eval.freq == 0:
             logger.debug(f"evaluating at iteration {step}...")
             eval_fp_top1, eval_fp_top5, eval_q_top1, eval_q_top5 = \
-                evaluate(model, val_loader, quant_enabled, verbose=True, progress_bar=CONF.progress_bar)
+                evaluate(model, val_loader, scheduler.quant_enabled, verbose=True, progress_bar=CONF.progress_bar)
             metric_logger.update(
                 eval_fp_top1=(eval_fp_top1, 1),
                 eval_fp_top5=(eval_fp_top5, 1),
@@ -227,9 +215,9 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
                 eval_q_top5=(eval_q_top5, 1)
             )
 
-            is_best = eval_q_top1 > BEST_ACCURACY if quant_enabled else eval_fp_top1 > BEST_ACCURACY
+            is_best = eval_q_top1 > BEST_ACCURACY if scheduler.quant_enabled else eval_fp_top1 > BEST_ACCURACY
             if is_best:
-                BEST_ACCURACY = eval_q_top1 if quant_enabled else eval_fp_top1
+                BEST_ACCURACY = eval_q_top1 if scheduler.quant_enabled else eval_fp_top1
                 model_without_ddp = model.module if CONF.dist else model
                 checkpointer.save(
                     model=model_without_ddp.state_dict(),
@@ -259,9 +247,8 @@ def evaluate(model, loader, enable_quant=True, verbose=False, progress_bar=True)
         n = img.size(0)
         img = img.to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)
-        logits_fp, logits_q = model(img, enable_quant=enable_quant)
-        fp_top1, fp_top5 = accuracy(logits_fp, label, topk=CONF.loss.topk)
-        q_top1, q_top5 = accuracy(logits_q, label, topk=CONF.loss.topk)
+        logits = model(img, enable_quant=enable_quant)
+        (fp_top1, fp_top5), (q_top1, q_top5) = accuracy(logits, label, topk=CONF.loss.topk)
         metric_logger.update(
             eval_fp_top1=(fp_top1, n),
             eval_fp_top5=(fp_top5, n),
@@ -274,7 +261,6 @@ def evaluate(model, loader, enable_quant=True, verbose=False, progress_bar=True)
 
     if verbose:
         logger = logging.getLogger(LOGGER_NAME)
-        tqdm.write("\n")
         logger.info(f"{str(metric_logger)}")
 
     return metric_logger.get_meter("eval_fp_top1", "eval_fp_top5", "eval_q_top1", "eval_q_top5")

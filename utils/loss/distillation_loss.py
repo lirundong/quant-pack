@@ -34,7 +34,7 @@ import torch.nn.functional as F
 __all__ = ["KDistLoss"]
 
 
-def kd_loss(logits, labels, teacher_logits, soft_weight, temperature):
+def kd_loss(logits, teacher_logits, labels, soft_weight, temperature):
     if teacher_logits is None:
         soft_loss = torch.tensor(0., device=logits.device)
         hard_loss = F.cross_entropy(logits, labels)
@@ -65,5 +65,5 @@ class KDistLoss(nn.Module):
         self.soft_weight = soft_weight
         self.temperature = temperature
 
-    def forward(self, logits, labels, teacher_logits):
-        return kd_loss(logits, labels, teacher_logits, self.soft_weight, self.temperature)
+    def forward(self, logits, teacher_logits, labels):
+        return kd_loss(logits, teacher_logits, labels, self.soft_weight, self.temperature)
