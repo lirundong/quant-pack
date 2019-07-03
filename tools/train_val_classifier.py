@@ -12,6 +12,7 @@ import yaml
 import torch
 import torch.multiprocessing as mp
 import torch.distributed as dist
+from torch.nn import SyncBatchNorm
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from tensorboardX import SummaryWriter
@@ -78,7 +79,7 @@ def main():
     logger.debug(f"building model `{CONF.arch.type}`...")
     model = backbone.__dict__[CONF.arch.type](**CONF.arch.args).to(DEVICE, non_blocking=True)
     if CONF.dist and CONF.arch.sync_bn:
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        model = SyncBatchNorm.convert_sync_batchnorm(model)
     logger.debug(f"build model {model.__class__.__name__} done:\n{model}")
 
     param_groups = model.get_param_group(*CONF.param_group.groups, **CONF.param_group.args)
@@ -143,6 +144,9 @@ def main():
         get_tasks(model, CONF.diagnose.tasks)  # TODO: should we preserve these tasks?
 
     if CONF.evaluate_only:
+        if CONF.eval.calibrate:
+            logger.info(f"calibrating quantization ranges at iteration {scheduler.last_iter}...")
+            model_without_ddp.update_ddp_quant_param(model, train_loader, CONF.quant.calib.steps, CONF.quant.calib.gamma)
         logger.info(f"[Step {scheduler.last_iter}]: evaluating...")
         evaluate(model, val_loader, CONF.eval.quant, verbose=True)
         return
@@ -154,6 +158,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
     global BEST_ACCURACY
     logger = logging.getLogger(LOGGER_NAME)
     checkpointer = Checkpointer(CONF.ckpt.dir)
+    model_without_ddp = model.module if CONF.dist else model
     metric_logger = MetricLogger(TB_LOGGER)
     metric_logger.add_meter("LR", SmoothedValue(fmt="{value:.4f}"))
     metric_logger.add_meter("loss", SmoothedValue(fmt="{value:.4f}"))
@@ -164,18 +169,13 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
         scheduler.step()
         step = scheduler.last_iter
 
+        if scheduler.do_calibration:
+            logger.info(f"resetting quantization ranges at iteration {scheduler.last_iter}...")
+            model_without_ddp.update_ddp_quant_param(model, train_loader, CONF.quant.calib.steps, CONF.quant.calib.gamma)
+
         img = img.to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)
         logits = model(img, enable_quant=scheduler.quant_enabled)
-
-        if CONF.distil.mode == "inv_distil" and scheduler.do_calibration:
-            # logger.debug(f"resetting quantization ranges at iteration {scheduler.last_iter}...")
-            # model.update_weight_quant_param()
-            # model.update_activation_quant_param(train_loader, CONF.quant.calib.steps, CONF.quant.calib.gamma)
-            #
-            # logger.debug(f"evaluating with calibrated quantization ranges...")
-            # evaluate(model, val_loader, step, verbose=True)
-            pass  # TODO: wrap this
 
         if CONF.distil.mode == "distil":
             with torch.no_grad():
@@ -190,7 +190,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
 
         opt.zero_grad()
         loss.backward()
-        opt.step()
+        opt.step(scheduler.quant_enabled)
 
         (fp_top1, fp_top5), (q_top1, q_top5) = accuracy(logits, label, topk=CONF.loss.topk)
 
@@ -204,7 +204,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             loss=(loss.item(), n),
         )
 
-        if step % CONF.eval.freq == 0:
+        if step % CONF.eval.freq == 0 or step == len(train_loader):  # step starts from 1
             logger.debug(f"evaluating at iteration {step}...")
             eval_fp_top1, eval_fp_top5, eval_q_top1, eval_q_top5 = \
                 evaluate(model, val_loader, scheduler.quant_enabled, verbose=True, progress_bar=CONF.progress_bar)
@@ -218,7 +218,6 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             is_best = eval_q_top1 > BEST_ACCURACY if scheduler.quant_enabled else eval_fp_top1 > BEST_ACCURACY
             if is_best:
                 BEST_ACCURACY = eval_q_top1 if scheduler.quant_enabled else eval_fp_top1
-                model_without_ddp = model.module if CONF.dist else model
                 checkpointer.save(
                     model=model_without_ddp.state_dict(),
                     opt=opt.state_dict(),

@@ -4,6 +4,7 @@ import datetime
 import time
 import logging
 import sys
+import os
 import builtins as _builtins
 from collections import defaultdict, deque
 
@@ -43,6 +44,8 @@ def init_log(name="global", debug=False, log_file=None):
     logger.addHandler(stdout_handler)
 
     if log_file is not None and _rank == 0:
+        log_dir, _ = os.path.split(log_file)
+        os.makedirs(log_dir, exist_ok=True)
         file_handler = logging.FileHandler(log_file, encoding="utf-8")
         file_handler.setLevel(level)
         file_handler.setFormatter(fmt)

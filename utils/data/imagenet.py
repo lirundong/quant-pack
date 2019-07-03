@@ -25,7 +25,10 @@ def read_img_by_pil(img_path, color, mc_client=None):
         mc_client.Get(img_path, value)
         value_str = mc.ConvertBuffer(value)
         buff = io.BytesIO(value_str)
-        img = Image.open(buff)
+        try:
+            img = Image.open(buff)
+        except OSError:  # memcached error
+            img = Image.open(img_path)
     else:
         img = Image.open(img_path)
     return img.convert(img_format)

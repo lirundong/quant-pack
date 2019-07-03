@@ -1,6 +1,6 @@
 ## Common args
 BATCH_SIZE_PER_GPU: &bs 128
-TOTAL_EPOCHS: &e 30
+TOTAL_EPOCHS: &e 90
 
 ## Dataset
 data:
@@ -69,7 +69,7 @@ param_group:
   conf:
     - type: SGD
       args: &sgd_args
-        lr: 0.005
+        lr: 0.05
         momentum: 0.9
         weight_decay: !!float 1e-4
         nesterov: true
@@ -91,11 +91,11 @@ opt:
 
 schedule:
   args:
-    milestones: [15, 25]
+    milestones: [30, 60]
     gamma: 0.1
     batch_size: *bs
-    warmup_epochs: 2
-    warmup_lr: 0.005
+    warmup_epochs: 4
+    warmup_lr: 0.05
     enable_quant_at: *enable_q
 
 ## Resume and snapshot
@@ -104,9 +104,8 @@ ckpt:
   dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/baseline/checkpoints/
 
 resume:
-  path: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
-  # path: null
-  load_opt: false
+  path: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/baseline/checkpoints/ckpt_final.pth
+  load_opt: true
 
 ## Diagnose
 log:

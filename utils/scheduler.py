@@ -39,7 +39,9 @@ class IterationScheduler(object):
         self.last_iter = last_iter
         self.in_warmup = self.last_iter < self.warmup_iters
 
-        if enable_quant_at is not None:
+        if enable_quant_at == "begin":
+            self.enable_quant_at = 1  # step starts from 1
+        elif enable_quant_at is not None:
             self.enable_quant_at = self.milestones[enable_quant_at]
         else:
             self.enable_quant_at = None
@@ -53,7 +55,7 @@ class IterationScheduler(object):
             logger.info(str(self))
 
     def _update_next_milestone(self):
-        remain_milestones = [m for m in self.milestones if m >= self.last_iter]
+        remain_milestones = [m for m in self.milestones if m > self.last_iter]
         self.next_milestone = min(remain_milestones) if len(remain_milestones) > 0 else None
 
     def __str__(self):
