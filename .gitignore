@@ -15,3 +15,8 @@
 # cache
 __pycache__
 *.pyc
+.pytest_cache
+
+build
+*.egg-info
+dist
