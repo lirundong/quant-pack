@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import torch
-import quant._C as _C
+from . import _C
 
 __all__ = ["ext"]
 

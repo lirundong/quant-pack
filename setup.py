@@ -9,7 +9,7 @@ setup(
     version="0.1.0a",
     ext_modules=[
         CUDAExtension(
-            name="quant._C",
+            name="utils.quant._C",
             sources=["csrc/quant.cpp",
                      "csrc/cuda/linear_quant_cuda.cu"],
             include_dirs=["csrc/",

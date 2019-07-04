@@ -17,6 +17,9 @@ __pycache__
 *.pyc
 .pytest_cache
 
+# built extensions
 build
 *.egg-info
 dist
+*.so
+*.o
