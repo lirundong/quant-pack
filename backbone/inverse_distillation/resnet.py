@@ -13,7 +13,12 @@ import torch.nn.init as init
 from torch.nn import Parameter
 from torchvision.models.resnet import ResNet, BasicBlock, Bottleneck
 
-from ._quantizer import fake_quant
+if torch.cuda.is_available():
+    from utils.quant.linear_quantizer import fake_linear_quant
+    _quantizer = fake_linear_quant
+else:
+    from ._quantizer import fake_quant
+    _quantizer = fake_quant
 
 __all__ = ["resnet18_idq", "resnet50_idq"]
 
@@ -174,8 +179,8 @@ class ResNetIDQ(ResNet):
             w_ub = self.weight_quant_param[f"{name}_weight_ub".replace(".", "_")]
             x_lb = self.activation_quant_param[f"{name}_act_lb".replace(".", "_")]
             x_ub = self.activation_quant_param[f"{name}_act_ub".replace(".", "_")]
-            qw = fake_quant(m.weight, w_lb, w_ub, self.kw, self.align_zero)
-            qx = fake_quant(x, x_lb, x_ub, self.ka, self.align_zero)
+            qw = _quantizer(m.weight, w_lb, w_ub, self.kw, self.align_zero)
+            qx = _quantizer(x, x_lb, x_ub, self.ka, self.align_zero)
             return qx, qw
 
         def quant_conv2d_forward(m, x):

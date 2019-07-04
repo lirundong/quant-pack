@@ -75,25 +75,19 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
 
   at::cuda::CUDAGuard device_guard(x_t.device());
 
-  const auto n = x_t.size(0);
-  const auto c = x_t.size(1);
-  const auto h = x_t.size(2);
-  const auto w = x_t.size(3);
-
-  const int output_size = n * c * h * w;
+  const int output_size = x_t.numel();
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
   dim3 grid(std::min(at::cuda::ATenCeilDiv(output_size, THREADS_PER_BLOCK),
                      MAX_GRIDS_NUM));
   dim3 block(THREADS_PER_BLOCK);
 
-  auto qx_t = at::zeros({n, c, h, w}, x_t.options());
-  auto di_t = at::zeros({n, c, h, w}, x_t.options());
-  auto maskx_t = at::zeros({n, c, h, w}, x_t.options().dtype(at::kByte));
+  auto qx_t = at::zeros_like(x_t);
+  auto di_t = at::zeros_like(x_t);
+  auto maskx_t = at::zeros_like(x_t, x_t.options().dtype(at::kByte));
 
   if (align_zero) {
     // nudge quantization boundaries, host code in double precision
     double eps = 1e-2;
-    // TODO: check whether this hard-coded type is correct
     double lb = lb_t.item<double>(), ub = ub_t.item<double>();
     ub = std::max(lb + eps, ub);
     double n = std::pow(2., bit_width) - 1.;
@@ -144,20 +138,15 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
 
   at::cuda::CUDAGuard device_guard(dy_t.device());
 
-  const auto n = dy_t.size(0);
-  const auto c = dy_t.size(1);
-  const auto h = dy_t.size(2);
-  const auto w = dy_t.size(3);
-
-  const int output_size = n * c * h * w;
+  const int output_size = dy_t.numel();
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
   dim3 grid(std::min(at::cuda::ATenCeilDiv(output_size, THREADS_PER_BLOCK),
                      MAX_GRIDS_NUM));
   dim3 block(THREADS_PER_BLOCK);
 
-  auto dx_t = at::zeros({n, c, h, w}, dy_t.options());
-  auto dlb_buffer = at::zeros({n, c, h, w}, dy_t.options());
-  auto dub_buffer = at::zeros({n, c, h, w}, dy_t.options());
+  auto dx_t = at::zeros_like(dy_t);
+  auto dlb_buffer = at::zeros_like(dy_t);
+  auto dub_buffer = at::zeros_like(dy_t);
 
   if (align_zero) {
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(dy_t.scalar_type(), "linear_quant_backward",

@@ -6,6 +6,7 @@ from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 setup(
     name="quant",
+    version="0.1.0a",
     ext_modules=[
         CUDAExtension(
             name="quant._C",
