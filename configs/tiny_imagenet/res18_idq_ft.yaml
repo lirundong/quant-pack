@@ -39,7 +39,7 @@ quant:
     steps: 5
     gamma: !!float 0.999
   enable_at: &enable_q begin
-  align_zero: &qz true
+  align_zero: &qz false  # TODO: correct gradients for align_zero=True
   all_layers: &q_all true
 
 ## Models

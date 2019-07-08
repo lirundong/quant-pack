@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.autograd import Function
 
-__all__ = ["fake_quant"]
+__all__ = ["fake_quant", "clamp"]
 
 QuantT = Tuple[Tensor, Tensor, Tensor]  # I, z, delta
 

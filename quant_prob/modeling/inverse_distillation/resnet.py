@@ -14,7 +14,7 @@ from torch.nn import Parameter
 from torchvision.models.resnet import ResNet, BasicBlock, Bottleneck
 
 if torch.cuda.is_available():
-    from utils.quant.linear_quantizer import fake_linear_quant
+    from quant_prob.modeling.quantizers import fake_linear_quant
     _quantizer = fake_linear_quant
 else:
     from ._quantizer import fake_quant

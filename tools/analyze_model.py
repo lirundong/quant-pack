@@ -7,7 +7,7 @@ from pprint import pformat
 import torch
 import torch.nn as nn
 
-import backbone
+from quant_prob import modeling
 
 _tasks = {}
 
@@ -46,7 +46,7 @@ if __name__ == "__main__":
     ckpt = torch.load(args.model, device)
     if "model" in ckpt.keys():
         ckpt = ckpt["model"]
-    model = backbone.__dict__[args.arch]()
+    model = modeling.__dict__[args.arch]()
     model.load_state_dict(ckpt, strict=False)
     f = _tasks[args.task]
     ret = f(model)

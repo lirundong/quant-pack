@@ -19,8 +19,8 @@ from tensorboardX import SummaryWriter
 from easydict import EasyDict
 from tqdm import tqdm
 
-import backbone
-from utils import *
+from quant_prob import modeling
+from quant_prob.utils import *
 
 BEST_ACCURACY = 0.
 EXP_DATETIME = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
@@ -77,7 +77,7 @@ def main():
                             **CONF.data.val_loader_conf)
 
     logger.debug(f"building model `{CONF.arch.type}`...")
-    model = backbone.__dict__[CONF.arch.type](**CONF.arch.args).to(DEVICE, non_blocking=True)
+    model = modeling.__dict__[CONF.arch.type](**CONF.arch.args).to(DEVICE, non_blocking=True)
     if CONF.dist and CONF.arch.sync_bn:
         model = SyncBatchNorm.convert_sync_batchnorm(model)
     logger.debug(f"build model {model.__class__.__name__} done:\n{model}")

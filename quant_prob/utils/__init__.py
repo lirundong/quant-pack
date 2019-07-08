@@ -7,6 +7,4 @@ from .loss import *
 from .distributed import *
 from .opt import *
 from .diag import *
-from .logging import *
-
-del logging
+from .log import *

@@ -3,7 +3,7 @@
 import torch
 from torch.autograd import Function
 
-from ._extensions import ext
+from ...extensions import ext
 
 __all__ = ["fake_linear_quant"]
 
