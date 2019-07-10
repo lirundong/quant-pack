@@ -172,6 +172,9 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
         if scheduler.do_calibration:
             logger.info(f"resetting quantization ranges at iteration {scheduler.last_iter}...")
             model_without_ddp.update_ddp_quant_param(model, train_loader, CONF.quant.calib.steps, CONF.quant.calib.gamma)
+            if CONF.distil.zero_momentum:
+                logger.debug(f"clear optimizer momentum after calibration")
+                opt.zero_momentum()
 
         img = img.to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)

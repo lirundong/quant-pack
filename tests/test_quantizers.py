@@ -7,6 +7,8 @@ from quant_prob.modeling.inverse_distillation._quantizer import fake_quant, clam
 from quant_prob.modeling.quantizers import fake_linear_quant
 
 SEED = 19260817
+DEVICE = torch.device("cuda:0")
+DTYPE = torch.float64
 torch.manual_seed(SEED)
 
 
@@ -43,9 +45,7 @@ def d_x(dy, mask_x):
 
 def test_quant_num_grad_align_zero():
     # TODO: we should add gradients to `clamp` op here
-    device = torch.device("cuda:0")
-    dtype = torch.float64
-    x = torch.randn(1, 3, 224, 224, requires_grad=True, dtype=dtype, device=device)
+    x = torch.randn(1, 3, 224, 224, requires_grad=True, dtype=DTYPE, device=DEVICE)
     d_qx = torch.randn_like(x).detach()
     lb = Parameter(x.detach().min() + 0.1)
     ub = Parameter(x.detach().max() - 0.1)
@@ -81,7 +81,7 @@ def test_quant_num_grad_align_zero():
 
     # numerical grad implementation
     with torch.no_grad():
-        N = torch.tensor(2 ** k - 1, dtype=dtype, device=device)
+        N = torch.tensor(2 ** k - 1, dtype=DTYPE, device=DEVICE)
         delta = ub.sub(lb).div(N)
         z = torch.round(lb.abs().div(delta))
         lb_ = z.neg().mul(delta)
@@ -103,9 +103,7 @@ def test_quant_num_grad_align_zero():
 
 def test_quant_num_grad_no_align_zero():
     from quant_prob.modeling.inverse_distillation._quantizer import RoundSTE
-    device = torch.device("cuda:0")
-    dtype = torch.float64
-    x = torch.randn(1, 3, 224, 224, requires_grad=True, dtype=dtype, device=device)
+    x = torch.randn(1, 3, 224, 224, requires_grad=True, dtype=DTYPE, device=DEVICE)
     d_qx = torch.randn_like(x).detach()
     lb = Parameter(x.detach().min() + 0.1)
     ub = Parameter(x.detach().max() - 0.1)
@@ -163,9 +161,7 @@ def test_quant_num_grad_no_align_zero():
 
 
 def test_clamp_num_grad():
-    device = torch.device("cuda:0")
-    dtype = torch.float64
-    x = torch.randn(1, 3, 224, 224, requires_grad=True, dtype=dtype, device=device)
+    x = torch.randn(1, 3, 224, 224, requires_grad=True, dtype=DTYPE, device=DEVICE)
     d_qx = torch.randn_like(x).detach()
     lb = Parameter(x.detach().min() + 0.1)
     ub = Parameter(x.detach().max() - 0.1)

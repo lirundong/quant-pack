@@ -59,6 +59,22 @@ class HybridOpt(object):
         for opt in self.optimizers:
             opt.zero_grad()
 
+    def zero_momentum(self):
+        def _check_and_zero(state_dict, *keys):
+            for key in keys:
+                if key in state_dict:
+                    state_dict[key].detach_()
+                    state_dict[key].zero_()
+
+        for opt in self.optimizers:
+            if isinstance(opt, optim.SGD):
+                for param_name, state in opt.state.items():
+                    _check_and_zero(state, "momentum_buffer")
+            elif isinstance(opt, optim.Adam):
+                for param_name, state in opt.state.items():
+                    state['step'] = 0
+                    _check_and_zero(state, "exp_avg", "exp_avg_sq")
+
     def step(self, quant_enabled=False):
         self.step_count += 1
         if quant_enabled and len(self.optimizers) > 1:
