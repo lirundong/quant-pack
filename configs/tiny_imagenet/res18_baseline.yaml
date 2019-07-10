@@ -81,9 +81,7 @@ param_group:
     - <<: *sgd_args
     - <<: *adam_args
   args:
-    ft_layers:
-      - layer4
-      - fc
+    ft_layers: null
 
 opt:
   args:
@@ -104,8 +102,8 @@ ckpt:
   dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/baseline/checkpoints/
 
 resume:
-  path: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/baseline/checkpoints/ckpt_final.pth
-  load_opt: true
+  path: null
+  load_opt: false
 
 ## Diagnose
 log:
