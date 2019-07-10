@@ -187,7 +187,8 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             loss = soft_loss + hard_loss
         elif CONF.distil.mode == "inv_distil":
             hard_loss, soft_loss = criterion(*logits, label)
-            loss = hard_loss * CONF.distil.hard_w + soft_loss * CONF.distil.soft_w
+            hard_w, soft_w = scheduler.get_scheduled_variables("hard_w", "soft_w")
+            loss = hard_loss * hard_w + soft_loss * soft_w
         else:
             loss = criterion(logits[0], label)
 

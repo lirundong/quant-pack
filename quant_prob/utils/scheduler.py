@@ -6,10 +6,18 @@ import collections
 __all__ = ["IterationScheduler"]
 
 
+ScheduledVariable = collections.namedtuple(
+    "ScheduledVariable",
+    field_names=["name", "init_value", "target_value",
+                 "warmup_start_step", "warmup_done_step"],
+)
+
+
 class IterationScheduler(object):
     def __init__(self, optimizer, milestones, dataset_size, batch_size,
                  warmup_epochs=0, warmup_lr=0, world_size=1, gamma=0.1,
-                 last_iter=-1, enable_quant_at=None, verbose=False):
+                 last_iter=-1, enable_quant_at=None, verbose=False,
+                 scheduled_variables=None):
         batch_size *= world_size
         iters_per_epoch = dataset_size // batch_size
         if last_iter == -1:
@@ -46,6 +54,12 @@ class IterationScheduler(object):
         else:
             self.enable_quant_at = None
 
+        # other scheduling variables
+        self.variable_schedules = collections.OrderedDict()
+        self.variable_states = collections.OrderedDict()
+        if scheduled_variables is not None:
+            self.add_scheduled_variables(*scheduled_variables)
+
         self._update_next_milestone()
         self.step(last_iter + 1)
 
@@ -69,6 +83,30 @@ class IterationScheduler(object):
 
         return "\n".join(info_tokens)
 
+    def add_scheduled_variables(self, *variables):
+        for variable in variables:
+            assert isinstance(variable, (tuple, list))
+            # fields: name, init_value, target_value, warmup_start_step, warmup_done_step
+            try:
+                scheduled_variable = ScheduledVariable(*variable)
+            except TypeError as e:
+                raise RuntimeError(f"When building {ScheduledVariable.__name__} from `{variable}`: {e}")
+            scheduled_variable = scheduled_variable._replace(
+                warmup_start_step=self.milestones[scheduled_variable.warmup_start_step],
+                warmup_done_step=self.milestones[scheduled_variable.warmup_done_step],
+            )
+            self.variable_schedules[scheduled_variable.name] = scheduled_variable
+            self.variable_states[scheduled_variable.name] = scheduled_variable.init_value
+
+    def get_scheduled_variables(self, *var_names):
+        ret = []
+        for var_name in var_names:
+            ret.append(self.variable_states[var_name])
+        return ret
+
+    def get_scheduled_variable(self, var_name):
+        return self.variable_states[var_name]
+
     def state_dict(self):
         return {key: value for key, value in self.__dict__.items() if key != 'optimizer'}
 
@@ -80,7 +118,21 @@ class IterationScheduler(object):
             iteration = self.last_iter + 1
         self.last_iter = iteration
 
-        # linear warmup
+        # warmup scheduled variables
+        if len(self.variable_schedules) > 0:
+            for var_name, var_schedule in self.variable_schedules.items():
+                if self.last_iter < var_schedule.warmup_start_step:
+                    self.variable_states[var_name] = var_schedule.init_value
+                elif var_schedule.warmup_start_step <= self.last_iter < var_schedule.warmup_done_step:
+                    delta = (var_schedule.target_value - var_schedule.init_value) \
+                            / (var_schedule.warmup_done_step - var_schedule.warmup_start_step + 1)
+                    step = self.last_iter - var_schedule.warmup_start_step
+                    var_current = var_schedule.init_value + delta * step
+                    self.variable_states[var_name] = var_current
+                else:
+                    self.variable_states[var_name] = var_schedule.target_value
+
+        # linear warmup LR
         if self.last_iter < self.warmup_iters:
             self.in_warmup = True
             for param, base_lr, target_lr in zip(self.optimizer.param_groups, self.base_lrs, self.target_lrs):
