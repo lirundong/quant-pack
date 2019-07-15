@@ -91,17 +91,19 @@ class IterationScheduler(object):
                 scheduled_variable = ScheduledVariable(*variable)
             except TypeError as e:
                 raise RuntimeError(f"When building {ScheduledVariable.__name__} from `{variable}`: {e}")
-            scheduled_variable = scheduled_variable._replace(
-                warmup_start_step=self.milestones[scheduled_variable.warmup_start_step],
-                warmup_done_step=self.milestones[scheduled_variable.warmup_done_step],
-            )
-            self.variable_schedules[scheduled_variable.name] = scheduled_variable
             self.variable_states[scheduled_variable.name] = scheduled_variable.init_value
+            # only enabled if scheduling is required
+            if scheduled_variable.warmup_start_step is not None:
+                scheduled_variable = scheduled_variable._replace(
+                    warmup_start_step=self.milestones[scheduled_variable.warmup_start_step],
+                    warmup_done_step=self.milestones[scheduled_variable.warmup_done_step],
+                )
+                self.variable_schedules[scheduled_variable.name] = scheduled_variable
 
     def get_scheduled_variables(self, *var_names):
         ret = []
         for var_name in var_names:
-            ret.append(self.variable_states[var_name])
+            ret.append(self.get_scheduled_variable(var_name))
         return ret
 
     def get_scheduled_variable(self, var_name):

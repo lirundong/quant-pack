@@ -3,8 +3,8 @@
 import torch
 from torch.nn import Parameter
 
-from quant_prob.modeling.inverse_distillation._quantizer import fake_quant, clamp
-from quant_prob.modeling.quantizers import fake_linear_quant
+from quant_prob.modeling.quantizers.param_linear_quantizer import fake_linear_quant, clamp
+from quant_prob.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant
 
 SEED = 19260817
 DEVICE = torch.device("cuda:0")
@@ -22,7 +22,7 @@ def test_bound_grad():
     assert lb.requires_grad
     assert ub.requires_grad
 
-    qx = fake_quant(x, lb, ub, k, align_zero=True)
+    qx = fake_linear_quant(x, lb, ub, k, align_zero=True)
     d_qx = torch.randn_like(qx)
     qx.backward(d_qx)
 
@@ -53,7 +53,7 @@ def test_quant_num_grad_align_zero():
 
     # autograd implementation
     assert ub.detach() - lb.detach() > 1e-2
-    qx = fake_quant(x, lb, ub, k, align_zero=True)
+    qx = fake_linear_quant(x, lb, ub, k, align_zero=True)
     qx.backward(d_qx)
 
     qx_gt = qx.detach()
@@ -66,7 +66,7 @@ def test_quant_num_grad_align_zero():
     ub.grad.data.zero_()
     x.grad.data.zero_()
 
-    qx = fake_linear_quant(x, lb, ub, k, align_zero=True)
+    qx = cuda_fake_linear_quant(x, lb, ub, k, align_zero=True)
     qx.backward(d_qx)
 
     qx_cuda = qx.detach()
@@ -102,7 +102,7 @@ def test_quant_num_grad_align_zero():
 
 
 def test_quant_num_grad_no_align_zero():
-    from quant_prob.modeling.inverse_distillation._quantizer import RoundSTE
+    from quant_prob.modeling.quantizers.param_linear_quantizer import RoundSTE
     x = torch.randn(1, 3, 224, 224, requires_grad=True, dtype=DTYPE, device=DEVICE)
     d_qx = torch.randn_like(x).detach()
     lb = Parameter(x.detach().min() + 0.1)
@@ -148,7 +148,7 @@ def test_quant_num_grad_no_align_zero():
     ub.grad.data.zero_()
     x.grad.data.zero_()
 
-    qx = fake_linear_quant(x, lb, ub, k, align_zero=False)
+    qx = cuda_fake_linear_quant(x, lb, ub, k, align_zero=False)
     qx.backward(d_qx)
 
     d_lb_cuda = lb.grad.detach()

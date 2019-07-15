@@ -146,9 +146,9 @@ def main():
     if CONF.evaluate_only:
         if CONF.eval.calibrate:
             logger.info(f"calibrating quantization ranges at iteration {scheduler.last_iter}...")
-            model_without_ddp.update_ddp_quant_param(model, train_loader, CONF.quant.calib.steps, CONF.quant.calib.gamma)
+            model_without_ddp.update_ddp_quant_param(model, val_loader, CONF.quant.calib.steps, CONF.quant.calib.gamma)
         logger.info(f"[Step {scheduler.last_iter}]: evaluating...")
-        evaluate(model, val_loader, CONF.eval.quant, verbose=True)
+        evaluate(model, val_loader, enable_quant=CONF.eval.quant, verbose=True)
         return
 
     train(model, criterion, train_loader, val_loader, opt, scheduler, teacher)
@@ -178,7 +178,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
 
         img = img.to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)
-        logits = model(img, enable_quant=scheduler.quant_enabled)
+        logits = model(img, enable_fp=CONF.quant.enable_fp, enable_quant=scheduler.quant_enabled)
 
         if CONF.distil.mode == "distil":
             with torch.no_grad():
@@ -190,7 +190,11 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             hard_w, soft_w = scheduler.get_scheduled_variables("hard_w", "soft_w")
             loss = hard_loss * hard_w + soft_loss * soft_w
         else:
-            loss = criterion(logits[0], label)
+            if scheduler.quant_enabled:
+                logit = logits[1]
+            else:
+                logit = logits[0]
+            loss = criterion(logit, label)
 
         opt.zero_grad()
         loss.backward()
@@ -210,8 +214,13 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
 
         if step % CONF.eval.freq == 0 or step == len(train_loader):  # step starts from 1
             logger.debug(f"evaluating at iteration {step}...")
-            eval_fp_top1, eval_fp_top5, eval_q_top1, eval_q_top5 = \
-                evaluate(model, val_loader, scheduler.quant_enabled, verbose=True, progress_bar=CONF.progress_bar)
+            eval_fp_top1, eval_fp_top5, eval_q_top1, eval_q_top5 = evaluate(
+                model,
+                val_loader,
+                enable_quant=scheduler.quant_enabled,
+                verbose=True,
+                progress_bar=CONF.progress_bar
+            )
             metric_logger.update(
                 eval_fp_top1=(eval_fp_top1, 1),
                 eval_fp_top5=(eval_fp_top5, 1),
@@ -239,7 +248,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
 
 
 @torch.no_grad()
-def evaluate(model, loader, enable_quant=True, verbose=False, progress_bar=True):
+def evaluate(model, loader, enable_fp=True, enable_quant=True, verbose=False, progress_bar=True):
     model.eval()
     metric_logger = MetricLogger(track_global_stat=True)
 
@@ -250,7 +259,7 @@ def evaluate(model, loader, enable_quant=True, verbose=False, progress_bar=True)
         n = img.size(0)
         img = img.to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)
-        logits = model(img, enable_quant=enable_quant)
+        logits = model(img, enable_fp=enable_fp, enable_quant=enable_quant)
         (fp_top1, fp_top5), (q_top1, q_top5) = accuracy(logits, label, topk=CONF.loss.topk)
         metric_logger.update(
             eval_fp_top1=(fp_top1, n),

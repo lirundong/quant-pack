@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.autograd import Function
 
-__all__ = ["fake_quant", "clamp"]
+__all__ = ["fake_linear_quant", "clamp"]
 
 QuantT = Tuple[Tensor, Tensor, Tensor]  # I, z, delta
 
@@ -36,10 +36,9 @@ def linear_quant(x: Tensor, lb: Tensor, ub: Tensor, k: int) -> QuantT:
     ub = torch.max(lb.add(eps), ub)
     delta = ub.sub(lb).div(n)
     z = round_(lb.abs().div(delta))
-    with torch.no_grad():
-        lb = z.neg().mul(delta)
-        ub = (n - z).mul(delta)
-    x = torch.clamp(x, lb.item(), ub.item())
+    lb = z.neg().mul(delta)
+    ub = (n - z).mul(delta)
+    x = clamp(x, lb, ub)
     i = round_(x.sub(lb).div(delta))
 
     return i, z, delta
@@ -50,7 +49,7 @@ def dequantizer(qx: QuantT) -> Tensor:
     return i.sub(z).mul(delta)
 
 
-def fake_quant(x: Tensor, lb: Tensor, ub: Tensor, k: int, align_zero: bool = True) -> Tensor:
+def fake_linear_quant(x: Tensor, lb: Tensor, ub: Tensor, k: int, align_zero: bool = True) -> Tensor:
     assert lb.lt(ub).all(), f"invalid quantization range: lb={lb.max().item()}, ub={ub.min().item()}"
     if align_zero:
         qx = dequantizer(linear_quant(x, lb, ub, k))

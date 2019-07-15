@@ -3,9 +3,9 @@
 import torch
 from torch.autograd import Function
 
-from ...extensions import ext
+from quant_prob.extensions import ext
 
-__all__ = ["fake_linear_quant"]
+__all__ = ["cuda_fake_linear_quant"]
 
 
 class LinearQuantSTE(Function):
@@ -27,7 +27,7 @@ class LinearQuantSTE(Function):
         return dx, dlb, dub, None, None
 
 
-def fake_linear_quant(x, lb, ub, k, align_zero):
+def cuda_fake_linear_quant(x, lb, ub, k, align_zero):
     assert lb.lt(ub).all(), f"invalid quantization range: lb={lb.max().item()}, ub={ub.min().item()}"
     quantizer = LinearQuantSTE.apply
     return quantizer(x, lb, ub, k, align_zero)

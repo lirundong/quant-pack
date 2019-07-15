@@ -58,7 +58,7 @@ arch:
 eval:
   freq: 300
   vis: false
-  quant: false
+  quant: true
   calibrate: false
 
 loss:
@@ -106,8 +106,8 @@ ckpt:
   dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_clear_m/checkpoints/
 
 resume:
-  path: null
-  load_opt: false
+  path: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_clear_m/checkpoints/ckpt_final.pth
+  load_opt: true
 
 ## Diagnose
 log:

@@ -14,11 +14,11 @@ from torch.nn import Parameter
 from torchvision.models.resnet import ResNet, BasicBlock, Bottleneck
 
 if torch.cuda.is_available():
-    from quant_prob.modeling.quantizers import fake_linear_quant
-    _quantizer = fake_linear_quant
+    from quant_prob.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant
+    quantizer = cuda_fake_linear_quant
 else:
-    from ._quantizer import fake_quant
-    _quantizer = fake_quant
+    from quant_prob.modeling.quantizers.param_linear_quantizer import fake_linear_quant
+    quantizer = fake_linear_quant
 
 __all__ = ["resnet18_idq", "resnet50_idq"]
 
@@ -171,7 +171,7 @@ class ResNetIDQ(ResNet):
 
         return weight_group, quant_param_group
 
-    def forward(self, inputs, enable_quant=True, update_quant_param=False):
+    def forward(self, inputs, enable_fp=True, enable_quant=True, update_quant_param=False):
 
         def do_fake_quant(m, x):  # TODO: add this to interface
             name = self.layer_names[id(m)]
@@ -179,8 +179,8 @@ class ResNetIDQ(ResNet):
             w_ub = self.weight_quant_param[f"{name}_weight_ub".replace(".", "_")]
             x_lb = self.activation_quant_param[f"{name}_act_lb".replace(".", "_")]
             x_ub = self.activation_quant_param[f"{name}_act_ub".replace(".", "_")]
-            qw = _quantizer(m.weight, w_lb, w_ub, self.kw, self.align_zero)
-            qx = _quantizer(x, x_lb, x_ub, self.ka, self.align_zero)
+            qw = quantizer(m.weight, w_lb, w_ub, self.kw, self.align_zero)
+            qx = quantizer(x, x_lb, x_ub, self.ka, self.align_zero)
             return qx, qw
 
         def quant_conv2d_forward(m, x):
@@ -218,7 +218,11 @@ class ResNetIDQ(ResNet):
                         h = m.register_forward_hook(hook)
                         self.ddp_hook_handles.append(h)
 
-        logits_fp = super(ResNetIDQ, self).forward(inputs)
+        if enable_fp:
+            logits_fp = super(ResNetIDQ, self).forward(inputs)
+        else:
+            logits_fp = None
+
         if enable_quant:
             prepare_quant_forward()
             logits_q = super(ResNetIDQ, self).forward(inputs)

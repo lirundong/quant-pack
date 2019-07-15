@@ -41,7 +41,7 @@ quant:
     gamma: !!float 0.999
   enable_at: &enable_q 0
   align_zero: &qz false  # TODO: correct gradients for align_zero=True
-  all_layers: &q_all true
+  all_layers: &q_all false
 
 ## Models
 arch:
@@ -101,25 +101,24 @@ schedule:
     enable_quant_at: *enable_q
     scheduled_variables:
       # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch
-      # warmup_{...}_epoch is the index of `schedule.milestones`
-      - ["soft_w", 0.0, 0.5, 0, 1]
-      - ["hard_w", 1.0, 0.5, 0, 1]
-
+      # warmup_{...}_epoch is the index of `schedule.milestones`, setup to null means do not tune it
+      - ["soft_w", 0.5, 0.5, null, null]
+      - ["hard_w", 0.5, 0.5, null, null]
 
 ## Resume and snapshot
 ckpt:
   freq: 1000
-  dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_warmup_loss_weight/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_not_quant_all/checkpoints/
 
 resume:
-  path: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_warmup_loss_weight/checkpoints/ckpt_final.pth
-  load_opt: true
+  path: null
+  load_opt: false
 
 ## Diagnose
 log:
   freq: 25
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_warmup_loss_weight/tb_logs/
-  file: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_warmup_loss_weight/train
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_not_quant_all/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_not_quant_all/train
 
 diagnose:
   enabled: false
@@ -129,5 +128,5 @@ diagnose:
   tasks: []
 
 ## Misc
-comment: "idq_warmup_loss_weight"
+comment: "idq_not_quant_all"
 progress_bar: false
