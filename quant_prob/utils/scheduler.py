@@ -107,7 +107,12 @@ class IterationScheduler(object):
         return ret
 
     def get_scheduled_variable(self, var_name):
-        return self.variable_states[var_name]
+        if var_name in self.variable_states:
+            return self.variable_states[var_name]
+        elif self.quant_enabled:
+            return self.variable_schedules[var_name].target_value
+        else:
+            return self.variable_schedules[var_name].init_value
 
     def state_dict(self):
         return {key: value for key, value in self.__dict__.items() if key != 'optimizer'}

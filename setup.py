@@ -9,7 +9,7 @@ def _get_requirements():
     requirements = []
     with open("requirements.txt", "r", encoding="utf-8") as f:
         for req in f.readlines():
-            requirements.append(req.strip())
+            requirements.append(req.strip().replace(" ", ""))
     return requirements
 
 
