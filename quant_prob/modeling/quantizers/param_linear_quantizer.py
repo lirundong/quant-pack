@@ -50,7 +50,8 @@ def dequantizer(qx: QuantT) -> Tensor:
 
 
 def fake_linear_quant(x: Tensor, lb: Tensor, ub: Tensor, k: int, align_zero: bool = True) -> Tensor:
-    assert lb.lt(ub).all(), f"invalid quantization range: lb={lb.max().item()}, ub={ub.min().item()}"
+    with torch.no_grad():
+        assert lb.lt(ub).all(), f"invalid quantization range: lb={lb.max().item()}, ub={ub.min().item()}"
     if align_zero:
         qx = dequantizer(linear_quant(x, lb, ub, k))
     else:

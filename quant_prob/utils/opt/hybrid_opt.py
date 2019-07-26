@@ -15,8 +15,6 @@ TensorT = torch.Tensor
 
 class HybridOpt(object):
 
-    eps = 1e-6
-
     def __init__(self,
                  param_groups,
                  conf_groups,

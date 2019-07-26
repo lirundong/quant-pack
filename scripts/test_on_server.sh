@@ -15,16 +15,18 @@ do
        else
             GREP_GPU=$OPTARG
        fi;;
+    *) echo "invalid flag -$opt";
+       exit 1;;
     esac
 done
 
-T=`date +%Y%m%d-%H-%M-%S`
-PORT=`shuf -i 12000-20000 -n 1`
+T=$(date +%Y%m%d-%H-%M-%S)
+PORT=$(shuf -i 12000-20000 -n 1)
 ROOT=..
 
 if [[ ! -f $ROOT/configs/${CONF_NAME}.yaml ]]; then
     echo "config \`${CONF_NAME}\` not exist";
-    exit -1
+    exit 1
 else
     CONF_FILE=${ROOT}/configs/${CONF_NAME}.yaml
     JOB_NAME=${CONF_NAME//\//_}
