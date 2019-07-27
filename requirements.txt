@@ -1,7 +1,8 @@
-pytorch >=1.1.0
-torchvision >=0.3.0
+torch >=1.1
+torchvision >=0.3
+tensorboard >=1.14
+future
 netifaces
-tensorboadX
 ipdb
 pyyaml
 easydict

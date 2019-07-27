@@ -5,7 +5,7 @@ from typing import Dict, Callable, Union, List
 
 import torch
 import torch.nn as nn
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 
 __all__ = ["VisDiagnoser"]
 

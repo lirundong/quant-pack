@@ -55,7 +55,10 @@ def dist_init(port):
         num_gpus = torch.cuda.device_count()
         torch.cuda.set_device(proc_id % num_gpus)
 
+        global IP_PATH
+        IP_PATH = f"{IP_PATH}_{port}"
         master_ip = _get_master_ip()
+
         os.environ["MASTER_PORT"] = str(port)
         os.environ["MASTER_ADDR"] = str(master_ip)
         os.environ["WORLD_SIZE"] = str(n_tasks)

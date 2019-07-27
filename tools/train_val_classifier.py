@@ -15,7 +15,7 @@ import torch.distributed as dist
 from torch.nn import SyncBatchNorm
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 from easydict import EasyDict
 from tqdm import tqdm
 
