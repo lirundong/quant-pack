@@ -123,10 +123,11 @@ class SmoothedValue(object):
 
 
 class MetricLogger(object):
-    def __init__(self, tensorboard=None, delimiter=", ", **kwargs):
+    def __init__(self, tensorboard=None, delimiter=", ", last_iter=-1, **kwargs):
         self.meters = defaultdict(lambda: SmoothedValue(**kwargs))
         self.tensorboard = tensorboard
         self.delimiter = delimiter
+        self.last_iter = last_iter
 
     def update(self, **kwargs):
         for k, v in kwargs.items():
@@ -202,30 +203,31 @@ class MetricLogger(object):
             yield obj
             iter_time.update(time.time() - end)
 
-            if i % log_freq == 0:
+            step = self.last_iter + i
+            if step % log_freq == 0:
                 self.synchronize_between_processes()
-                eta_seconds = iter_time.avg * (len(iterable) - i)
+                eta_seconds = iter_time.avg * (len(iterable) - step)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
                 if progress_bar:
                     print("\n")
                 if torch.cuda.is_available():
                     logger.info(log_msg.format(
-                        i, len(iterable), eta=eta_string,
+                        step, len(iterable), eta=eta_string,
                         meters=str(self),
                         time=str(iter_time), data=str(data_time),
                         memory=torch.cuda.max_memory_allocated() / MB))
                 else:
                     logger.info(log_msg.format(
-                        i, len(iterable), eta=eta_string,
+                        step, len(iterable), eta=eta_string,
                         meters=str(self),
                         time=str(iter_time), data=str(data_time)))
 
                 if self.tensorboard is not None:
                     for name, meter in self.meters.items():
                         if name.startswith("eval_"):
-                            self.tensorboard.add_scalar(f"{log_prefix}/{name}", meter.value, i)
+                            self.tensorboard.add_scalar(f"{log_prefix}/{name}", meter.value, step)
                         else:
-                            self.tensorboard.add_scalar(f"{log_prefix}/{name}", meter.avg, i)
+                            self.tensorboard.add_scalar(f"{log_prefix}/{name}", meter.avg, step)
             end = time.time()
 
         if progress_bar:

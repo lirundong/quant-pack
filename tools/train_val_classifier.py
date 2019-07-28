@@ -159,7 +159,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
     logger = logging.getLogger(LOGGER_NAME)
     checkpointer = Checkpointer(CONF.ckpt.dir)
     model_without_ddp = model.module if CONF.dist else model
-    metric_logger = MetricLogger(TB_LOGGER)
+    metric_logger = MetricLogger(TB_LOGGER, last_iter=scheduler.last_iter)
     metric_logger.add_meter("LR", SmoothedValue(fmt="{value:.4f}"))
     metric_logger.add_meter("loss", SmoothedValue(fmt="{value:.4f}"))
     model.train()
