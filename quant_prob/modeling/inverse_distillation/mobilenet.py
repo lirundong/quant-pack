@@ -1,15 +1,11 @@
 # -*- coding: utf-8 -*-
 
-from torchvision.models import MobileNetV2
+from torchvision.models.mobilenet import MobileNetV2, model_urls
 from torchvision.models.utils import load_state_dict_from_url
 
 from .idq import IDQ
 
 __all__ = ["IDQMobileNetV2", "mobilenet_v2_idq"]
-
-model_urls = {
-    'mobilenet_v2': 'https://download.pytorch.org/models/mobilenet_v2-b0353104.pth',
-}
 
 
 class IDQMobileNetV2(MobileNetV2, IDQ):

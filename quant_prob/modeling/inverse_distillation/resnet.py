@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import torch
-from torchvision.models.resnet import ResNet, BasicBlock, Bottleneck
+from torchvision.models.resnet import ResNet, BasicBlock, Bottleneck, model_urls
 from torchvision.models.utils import load_state_dict_from_url
 
 from .idq import IDQ
@@ -14,16 +14,6 @@ else:
     quantizer = fake_linear_quant
 
 __all__ = ["resnet18_idq", "resnet50_idq", "resnet101_idq"]
-
-model_urls = {
-    'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
-    'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
-    'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth',
-    'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
-    'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
-    'resnext50_32x4d': 'https://download.pytorch.org/models/resnext50_32x4d-7cdf4587.pth',
-    'resnext101_32x8d': 'https://download.pytorch.org/models/resnext101_32x8d-8ba56ff5.pth',
-}
 
 
 class ResNetIDQ(ResNet, IDQ):

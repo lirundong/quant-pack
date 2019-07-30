@@ -34,7 +34,6 @@ else
 fi
 
 source $HOME/.local/bin/env_spring.sh
-# source activate r0.2.1
 source activate torch-1.1-cuda-9.0
 
 export PYTHONPATH=$ROOT:$PYTHONPATH
@@ -47,6 +46,7 @@ GLOG_vmodule=MemcachedClient=-1 srun \
   --job-name=${JOB_NAME} \
   --mpi=pmi2 \
   --kill-on-bad-exit=1 \
+  ${SLURM_EXTRA} \
 python $ROOT/tools/train_val_classifier.py \
   --conf-path ${CONF_FILE} \
   --port ${PORT} \

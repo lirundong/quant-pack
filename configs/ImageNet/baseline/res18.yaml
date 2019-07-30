@@ -1,6 +1,6 @@
 ## Common args
 BATCH_SIZE_PER_GPU: &bs 128
-TOTAL_EPOCHS: &e 90
+TOTAL_EPOCHS: &e 120
 
 ## Dataset
 data:
@@ -27,9 +27,8 @@ data:
 ## Strategy
 distil:
   mode: null # {null, inv_distil, distil}
-  soft_w: null
-  hard_w: null
   alter_step: &alter_n null
+  zero_momentum: false
 
 quant:
   bitwidth:
@@ -38,9 +37,11 @@ quant:
   calib:
     steps: 25
     gamma: !!float 0.999
+    required_on_training: true
   enable_at: &enable_q null # never enable
+  enable_fp: true
   align_zero: &qz false
-  all_layers: &q_all true
+  fp_layers: &fp_layers null
 
 ## Models
 arch:
@@ -48,15 +49,16 @@ arch:
   args:
     kw: *qw
     ka: *qa
-    quant_all: *q_all
+    fp_layers: *fp_layers
     align_zero: *qz
-  sync_bn: true
+  sync_bn: false # true
 
-## Training
+## Evaluation
 eval:
-  freq: 300
+  freq: 1000
   vis: false
   quant: false
+  calibrate: false
 
 loss:
   type: CrossEntropyLoss
@@ -88,12 +90,18 @@ opt:
 
 schedule:
   args:
-    milestones: [30, 60]
+    milestones: [60, 90]
     gamma: 0.1
     batch_size: *bs
     warmup_epochs: 4
-    warmup_lr: 0.05
+    warmup_lr: 0.2
     enable_quant_at: *enable_q
+    scheduled_variables:
+      # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch
+      # warmup_{...}_epoch is the index of `schedule.milestones`
+      # set to `null` means use init_value for FP training, target_value for Q training
+      - ["soft_w", 0.0, 0.5, null, null]
+      - ["hard_w", 1.0, 0.5, null, null]
 
 ## Resume and snapshot
 ckpt:
