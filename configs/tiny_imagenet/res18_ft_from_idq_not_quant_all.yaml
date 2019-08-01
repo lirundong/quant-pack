@@ -22,7 +22,7 @@ data:
     batch_size: *bs
     shuffle: false
     pin_memory: true
-    num_workers: 2
+    num_workers: 1
 
 ## Strategy
 distil:

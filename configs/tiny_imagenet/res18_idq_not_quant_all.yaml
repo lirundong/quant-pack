@@ -22,7 +22,7 @@ data:
     batch_size: *bs
     shuffle: false
     pin_memory: true
-    num_workers: 2
+    num_workers: 1
 
 ## Strategy
 distil:
@@ -39,9 +39,13 @@ quant:
   calib:
     steps: 5
     gamma: !!float 0.999
+    required_on_training: true
   enable_at: &enable_q 0
+  enable_fp: true
   align_zero: &qz false  # TODO: correct gradients for align_zero=True
-  all_layers: &q_all false
+  fp_layers: &fp_layers
+    - conv1
+    - fc
 
 ## Models
 arch:
@@ -49,14 +53,14 @@ arch:
   args:
     kw: *qw
     ka: *qa
-    quant_all: *q_all
+    fp_layers: *fp_layers
     align_zero: *qz
     num_classes: 200
   sync_bn: true
 
 ## Evaluation
 eval:
-  freq: 300
+  freq: 1000
   vis: false
   quant: true
   calibrate: false

@@ -101,8 +101,14 @@ def main():
         TB_LOGGER = SummaryWriter(tb_dir)
 
     if CONF.resume.path is not None:
-        logger.debug(f"loading checkpoint at: {CONF.resume.path}...")
-        checkpoint = torch.load(CONF.resume.path, DEVICE)
+        if CONF.resume.path == "latest":
+            resume_path = get_latest_file(CONF.ckpt.dir)
+        elif CONF.resume.path == "final":
+            resume_path = os.path.join(CONF.ckpt.dir, "ckpt_final.pth")
+        else:
+            resume_path = CONF.resume.path
+        logger.debug(f"loading checkpoint at: {resume_path}...")
+        checkpoint = torch.load(resume_path, DEVICE)
         model_dict = checkpoint["model"] if "model" in checkpoint.keys() else checkpoint
         try:
             model_without_ddp.load_state_dict(model_dict, strict=False)

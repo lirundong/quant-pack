@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 
 import os
+from glob import glob
 from collections import OrderedDict
 from copy import deepcopy
 from datetime import timedelta
 
 import torch
 
-__all__ = ["accuracy", "get_eta", "update_config", "Checkpointer"]
+__all__ = ["accuracy", "get_eta", "get_latest_file", "update_config", "Checkpointer"]
 
 
 @torch.no_grad()
@@ -39,6 +40,12 @@ def get_eta(gone_steps, total_steps, speed):
     remain_seconds = remain_steps * speed
 
     return timedelta(seconds=remain_seconds)
+
+
+def get_latest_file(path: str) -> str:
+    files = glob(os.path.join(path, "*"))
+    latest = sorted(files, key=os.path.getmtime)
+    return latest[-1]
 
 
 def update_config(conf: dict, extra: dict) -> None:

@@ -5,5 +5,6 @@ future
 netifaces
 ipdb
 pyyaml
+pytest
 easydict
 tqdm

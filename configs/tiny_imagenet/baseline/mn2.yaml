@@ -1,5 +1,5 @@
 ## Common args
-BATCH_SIZE_PER_GPU: &bs 64
+BATCH_SIZE_PER_GPU: &bs 128 # 64 for 32 workers, 128 for 16 workers
 TOTAL_EPOCHS: &e 120
 
 ## Dataset
@@ -8,7 +8,7 @@ data:
     type: ImageNetST
     args:
       img_dir: /mnt/lustre/share/images/
-      meta_dir: /mnt/lustre/share/images/meta/
+      meta_dir: /mnt/lustre/lirundong/Data/Meta/imagenet_dev/
       color: true
   train_loader_conf:
     batch_size: *bs
@@ -35,23 +35,24 @@ quant:
     w: &qw 4
     a: &qa 4
   calib:
-    steps: 25
+    steps: 5
     gamma: !!float 0.999
     required_on_training: true
-  enable_at: &enable_q null # never enable
+  enable_at: &enable_q null
   enable_fp: true
-  align_zero: &qz false
+  align_zero: &qz false  # TODO: correct gradients for align_zero=True
   fp_layers: &fp_layers null
 
 ## Models
 arch:
-  type: resnet50_idq
+  type: mobilenet_v2_idq
   args:
     kw: *qw
     ka: *qa
     fp_layers: *fp_layers
     align_zero: *qz
-  sync_bn: false # true
+    num_classes: 200
+  sync_bn: false
 
 ## Evaluation
 eval:
@@ -70,9 +71,9 @@ param_group:
   conf:
     - type: SGD
       args: &sgd_args
-        lr: 0.025
+        lr: 0.05
         momentum: 0.9
-        weight_decay: !!float 1e-4
+        weight_decay: !!float 1e-5
         nesterov: true
     - type: Adam
       args: &adam_args
@@ -82,7 +83,7 @@ param_group:
     - <<: *sgd_args
     - <<: *adam_args
   args:
-    ft_layers: null # IMPORTANT: tune all layers
+    ft_layers: null
 
 opt:
   args:
@@ -106,17 +107,17 @@ schedule:
 ## Resume and snapshot
 ckpt:
   freq: 1000
-  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/baseline/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/mn2_baseline/checkpoints/
 
 resume:
-  path: final
+  path: null
   load_opt: true
 
 ## Diagnose
 log:
   freq: 25
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/baseline/tb_logs/
-  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/baseline/train
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/mn2_baseline/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/mn2_baseline/train
 
 diagnose:
   enabled: false
@@ -126,5 +127,5 @@ diagnose:
   tasks: []
 
 ## Misc
-comment: "baseline_res50"
+comment: "idq_mn2_baseline"
 progress_bar: false

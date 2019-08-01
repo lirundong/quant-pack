@@ -22,7 +22,7 @@ data:
     batch_size: *bs
     shuffle: false
     pin_memory: true
-    num_workers: 2
+    num_workers: 1
 
 ## Strategy
 distil:
@@ -110,8 +110,8 @@ ckpt:
 
 resume:
   # path: /mnt/lustre/lirundong/Data/torchvision/mobilenet_v2-b0353104.pth
-  path: null
-  load_opt: false
+  path: final
+  load_opt: true
 
 ## Diagnose
 log:
