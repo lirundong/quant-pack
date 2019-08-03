@@ -23,6 +23,26 @@ class RoundSTE(Function):
         return dy.clone()
 
 
+class BinaryQuant(Function):
+
+    @staticmethod
+    def forward(ctx, x, lb, ub):
+        mask_up = x > 0
+        bx = torch.where(mask_up, ub, lb)
+        ctx.save_for_backward(mask_up)
+
+        return bx
+
+    @staticmethod
+    def backward(ctx, dy):
+        mask_up, = ctx.saved_tensors
+        dy = dy.clone()
+        d_lb = dy[~mask_up].sum()
+        d_ub = dy[mask_up].sum()
+
+        return dy, d_lb, d_ub
+
+
 def clamp(x: Tensor, lb: Tensor, ub: Tensor) -> Tensor:
     x = torch.min(x, ub)
     x = torch.max(lb, x)
@@ -52,6 +72,11 @@ def dequantizer(qx: QuantT) -> Tensor:
 def fake_linear_quant(x: Tensor, lb: Tensor, ub: Tensor, k: int, align_zero: bool = True) -> Tensor:
     with torch.no_grad():
         assert lb.lt(ub).all(), f"invalid quantization range: lb={lb.max().item()}, ub={ub.min().item()}"
+
+    if k == 1:
+        quantizer = BinaryQuant.apply
+        return quantizer(x, lb, ub)
+
     if align_zero:
         qx = dequantizer(linear_quant(x, lb, ub, k))
     else:

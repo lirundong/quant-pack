@@ -112,6 +112,40 @@ __global__ void linear_quant_no_align_zero_backward_kernel(
   }
 }
 
+template <typename T>
+__global__ void binary_forward_kernel(
+  const int nthreads,
+  const T *x_t,
+  const T lb,
+  const T ub,
+  T *qx_t,
+  uint8_t *maskx_t) {
+  CUDA_1D_KERNEL_LOOP(idx, nthreads) {
+    T x = x_t[idx];
+
+    qx_t[idx] = x > 0. ? ub : lb;
+    maskx_t[idx] |= x > 0. ? OUTLIER_UPPER : OUTLIER_LOWER;
+  }
+}
+
+template <typename T>
+__global__ void binary_backward_kernel(
+  const int nthreads,
+  const T *dy_t,
+  const uint8_t *maskx_t,
+  T *dx_t,
+  T *dlb_t,
+  T *dub_t) {
+  CUDA_1D_KERNEL_LOOP(idx, nthreads) {
+    T dy = dy_t[idx];
+    uint8_t maskx = maskx_t[idx];
+
+    dx_t[idx] = dy;
+    dlb_t[idx] = dy * static_cast<T>(maskx & OUTLIER_LOWER);
+    dub_t[idx] = dy * static_cast<T>(maskx & OUTLIER_UPPER);
+  }
+}
+
 std::array<at::Tensor, 3> linear_quant_forward_cuda(
   const at::Tensor &x_t,
   const at::Tensor &lb_t,
@@ -144,7 +178,25 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
   auto di_t = at::zeros_like(x_t);
   auto maskx_t = at::zeros_like(x_t, x_t.options().dtype(at::kByte));
 
-  if (align_zero) {
+  if (bit_width == 1) {
+    double lb = lb_t.item<double>(), ub = ub_t.item<double>();
+
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+      x_t.scalar_type(),
+      "binary_forward",
+      [&] () -> void {
+        binary_forward_kernel<scalar_t>
+          <<<grid, block, 0, stream>>>(
+            /*nthreads=*/output_size,
+            /*x_t=*/x_t.data<scalar_t>(),
+            /*lb=*/static_cast<scalar_t>(lb),
+            /*ub=*/static_cast<scalar_t>(ub),
+            /*qx_t=*/qx_t.data<scalar_t>(),
+            /*maskx_t=*/maskx_t.data<uint8_t>());
+      }
+    );
+
+  } else if (align_zero) {
     // nudge quantization boundaries, host code in double precision
     double eps = 1e-2;
     double lb = lb_t.item<double>(), ub = ub_t.item<double>();
@@ -173,6 +225,7 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
             /*maskx_t*/maskx_t.data<uint8_t>());
       }
     );
+
   } else {
     double lb = lb_t.item<double>(), ub = ub_t.item<double>();
     double n = std::pow(2., bit_width) - 1.;
@@ -233,7 +286,23 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
   auto dlb_buffer = at::zeros_like(dy_t);
   auto dub_buffer = at::zeros_like(dy_t);
 
-  if (align_zero) {
+  if (bit_width == 1) {
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+      dy_t.scalar_type(),
+      "binary_backward",
+      [&] () -> void {
+        binary_backward_kernel<scalar_t>
+          <<<grid, block, 0, stream>>>(
+            /*nthreads=*/output_size,
+            /*dy_t=*/dy_t.data<scalar_t>(),
+            /*maskx_t=*/maskx_t.data<uint8_t>(),
+            /*dx_t=*/dx_t.data<scalar_t>(),
+            /*dlb_t=*/dlb_buffer.data<scalar_t>(),
+            /*dub_t=*/dub_buffer.data<scalar_t>());
+      }
+    );
+
+  } else if (align_zero) {
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(
       dy_t.scalar_type(),
       "linear_quant_align_zero_backward",
@@ -251,6 +320,7 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
             /*dub_t=*/dub_buffer.data<scalar_t>());
       }
     );
+
   } else {
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(
       dy_t.scalar_type(),

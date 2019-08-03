@@ -176,3 +176,35 @@ def test_clamp_num_grad():
 
     assert torch.isclose(d_ub, ub.grad.detach())
     assert torch.isclose(d_lb, lb.grad.detach())
+
+
+def test_binary_quant():
+    x = torch.randn(1, 3, 224, 224, requires_grad=True, dtype=DTYPE, device=DEVICE)
+    d_bx = torch.randn_like(x).detach()
+    lb = Parameter(x.detach().min() + 0.1)
+    ub = Parameter(x.detach().max() - 0.1)
+
+    # autograd
+    bx = fake_linear_quant(x, lb, ub, k=1)
+    bx.backward(d_bx)
+
+    dx = x.grad.detach()
+    d_lb = lb.grad.detach()
+    d_ub = ub.grad.detach()
+
+    # clear grad
+    x.grad.detach_().zero_()
+    lb.grad.detach_().zero_()
+    ub.grad.detach_().zero_()
+
+    # CUDA numerical
+    bx_cuda = cuda_fake_linear_quant(x, lb, ub, k=1, align_zero=True)
+    bx_cuda.backward(d_bx)
+
+    dx_cuda = x.grad.detach()
+    d_lb_cuda = lb.grad.detach()
+    d_ub_cuda = ub.grad.detach()
+
+    assert torch.allclose(dx_cuda, dx)
+    assert torch.isclose(d_lb_cuda, d_lb)
+    assert torch.isclose(d_ub_cuda, d_ub)
