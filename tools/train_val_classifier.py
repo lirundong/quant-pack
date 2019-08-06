@@ -152,9 +152,15 @@ def main():
     if CONF.evaluate_only:
         if CONF.eval.calibrate:
             logger.info(f"calibrating quantization ranges at iteration {scheduler.last_iter}...")
-            model_without_ddp.update_ddp_quant_param(model, val_loader, CONF.quant.calib.steps, CONF.quant.calib.gamma)
+            model_without_ddp.update_ddp_quant_param(
+                model,
+                val_loader,
+                CONF.quant.calib.steps,
+                CONF.quant.calib.gamma,
+                CONF.quant.calib.update_bn,
+            )
         logger.info(f"[Step {scheduler.last_iter}]: evaluating...")
-        evaluate(model, val_loader, enable_quant=CONF.eval.quant, verbose=True)
+        evaluate(model, val_loader, enable_quant=CONF.eval.quant, use_ema_stat=CONF.eval.use_ema_stat, verbose=True)
         return
 
     train(model, criterion, train_loader, val_loader, opt, scheduler, teacher)
@@ -177,10 +183,17 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
 
         if CONF.quant.calib.required_on_training and scheduler.do_calibration:
             logger.info(f"resetting quantization ranges at iteration {scheduler.last_iter}...")
-            model_without_ddp.update_ddp_quant_param(model, train_loader, CONF.quant.calib.steps, CONF.quant.calib.gamma)
+            model_without_ddp.update_ddp_quant_param(
+                model,
+                train_loader,
+                CONF.quant.calib.steps,
+                CONF.quant.calib.gamma,
+                CONF.quant.calib.update_bn,
+            )
             if CONF.distil.zero_momentum:
                 logger.debug(f"clear optimizer momentum after calibration")
                 opt.zero_momentum()
+            BEST_ACCURACY = 0.
 
         img = img.to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)
@@ -254,8 +267,9 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
 
 
 @torch.no_grad()
-def evaluate(model, loader, enable_fp=True, enable_quant=True, verbose=False, progress_bar=True):
-    model.eval()
+def evaluate(model, loader, enable_fp=True, enable_quant=True, verbose=False, progress_bar=True, use_ema_stat=True):
+    if use_ema_stat:
+        model.eval()
     metric_logger = MetricLogger(track_global_stat=True)
 
     if progress_bar:

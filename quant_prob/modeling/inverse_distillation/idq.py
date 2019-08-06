@@ -10,10 +10,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.init as init
 from torch.nn import Parameter
-
-from quant_prob.modeling.utils import calculate_fan_in_and_fan_out
 
 if torch.cuda.is_available():
     from quant_prob.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant
@@ -95,9 +92,12 @@ class IDQ:
                 self._update_stat(weight_view, f"{n}_weight_lb".replace(".", "_"), 0., self.weight_quant_param)
                 self._update_stat(weight_view, f"{n}_weight_ub".replace(".", "_"), 1., self.weight_quant_param)
 
-    def _prepare_act_quant_param_hook(self, gamma=0.999):
+    def _prepare_act_quant_param_hook(self, gamma=0.999, update_bn=False):
 
         def update_act_stat_hook(module, input, output):
+            if not isinstance(module, (nn.Conv2d, nn.Linear)):
+                return
+
             name = self.layer_names[id(module)]
             if not torch.is_tensor(input):
                 assert len(input) == 1
@@ -108,8 +108,38 @@ class IDQ:
             self._update_stat(input_view, f"{name}_act_ub".replace(".", "_"), gamma, self.activation_quant_param)
             self._update_stat(input_view, f"{name}_act_lb".replace(".", "_"), 1. - gamma, self.activation_quant_param)
 
+        def update_bn_stat_hook(module, input, output):
+            if not isinstance(module, (nn.BatchNorm2d, nn.SyncBatchNorm)):
+                return
+
+            if not torch.is_tensor(input):
+                assert len(input) == 1
+                input = input[0]
+            if input.requires_grad:
+                input = input.detach()
+            assert input.dim() == 4
+            n, c = input.shape[:2]
+            input_view = input.permute(1, 0, 2, 3).reshape(c, -1)
+            if isinstance(module, nn.SyncBatchNorm):
+                c_sum = input_view.sum(dim=1)
+                c_square_sum = input_view.pow(2).sum(dim=1)
+                n = torch.tensor(n, device=input.device, dtype=input.dtype)
+                dist.all_reduce(c_sum)
+                dist.all_reduce(c_square_sum)
+                dist.all_reduce(n)
+                mean = c_sum / n
+                var = c_square_sum / n - mean.pow(2)  # TODO: unbiased?
+            else:
+                mean = input_view.mean()
+                var = input_view.var()
+
+            module.running_mean.copy_(mean)
+            module.running_var.copy_(var)
+
         assert len(self.ddp_forward_hooks) == 0
         self.ddp_forward_hooks.append(update_act_stat_hook)
+        if update_bn:
+            self.ddp_forward_hooks.append(update_bn_stat_hook)
 
     def _wrap_forward(self):
 
@@ -151,14 +181,30 @@ class IDQ:
 
         def _decorate(func):
             @wraps(func)
-            def _wrapper(*args, enable_fp=True, enable_quant=True, update_quant_param=False, **kwargs):
+            def _wrapper(*args,
+                         enable_fp=True,
+                         enable_quant=True,
+                         update_quant_param=False,
+                         update_bn=False,
+                         **kwargs):
 
                 if update_quant_param:
                     assert len(self.ddp_forward_hooks) > 0 and len(self.ddp_hook_handles) == 0
+                    assert enable_fp
                     assert not enable_quant
                     ddp_forward_hooks = set(self.ddp_forward_hooks)
                     for n, m in self.named_modules():
                         if isinstance(m, (nn.Conv2d, nn.Linear)):
+                            for hook in ddp_forward_hooks:
+                                h = m.register_forward_hook(hook)
+                                self.ddp_hook_handles.append(h)
+
+                if update_bn:
+                    assert enable_quant
+                    assert not enable_fp
+                    ddp_forward_hooks = set(self.ddp_forward_hooks)
+                    for n, m in self.named_modules():
+                        if isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
                             for hook in ddp_forward_hooks:
                                 h = m.register_forward_hook(hook)
                                 self.ddp_hook_handles.append(h)
@@ -175,7 +221,7 @@ class IDQ:
                 else:
                     logits_q = None
 
-                if update_quant_param:
+                if len(self.ddp_hook_handles) > 0:
                     for h in self.ddp_hook_handles:
                         h.remove()
                     self.ddp_hook_handles.clear()
@@ -187,9 +233,9 @@ class IDQ:
         return _decorate
 
     @torch.no_grad()
-    def update_quant_param(self, calibration_loader, calibration_steps, gamma=0.999):
+    def update_quant_param(self, calibration_loader, calibration_steps, gamma=0.999, update_bn=False):
         self._update_weight_quant_param()
-        self._prepare_act_quant_param_hook(gamma)
+        self._prepare_act_quant_param_hook(gamma, update_bn)
         device = next(self.parameters()).device
         for step, (img, label) in enumerate(calibration_loader):
             if step > calibration_steps:
@@ -199,20 +245,26 @@ class IDQ:
         self.ddp_forward_hooks.clear()
 
     @torch.no_grad()
-    def update_ddp_quant_param(self, model, calibration_loader, calibration_steps, gamma=0.999):
+    def update_ddp_quant_param(self, model, calibration_loader, calibration_steps, gamma=0.999, update_bn=False):
+        # TODO: add `update_bn` to `_prepare_act_quant_param_hook`
         assert isinstance(model, nn.parallel.DistributedDataParallel)
         assert isinstance(model.module, IDQ)
         model_without_ddp = model.module
         model_without_ddp._update_weight_quant_param()
-        model_without_ddp._prepare_act_quant_param_hook(gamma)
+        model_without_ddp._prepare_act_quant_param_hook(gamma, update_bn)
         device = next(model.parameters()).device
         logger = getLogger("global")
         for step, (img, label) in enumerate(calibration_loader):
-            if step > calibration_steps:
+            if step < calibration_steps:
+                torch.cuda.empty_cache()
+                _ = model(img.to(device, non_blocking=True), enable_quant=False, update_quant_param=True)
+                logger.debug(f"[calib step {step:2d}]: max GRAM: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB")
+            elif update_bn and step < calibration_steps * 2:
+                torch.cuda.empty_cache()
+                _ = model(img.to(device, non_blocking=True), enable_fp=False, update_bn=True)
+                logger.debug(f"[update BN step {step:2d}]: max GRAM: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB")
+            else:
                 break
-            torch.cuda.empty_cache()
-            _ = model(img.to(device, non_blocking=True), enable_quant=False, update_quant_param=True)
-            logger.debug(f"[calib step {step:2d}]: max GRAM: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB")
         model_without_ddp.ddp_forward_hooks.clear()
 
     def get_param_group(self, weight_conf, quant_param_conf, ft_layers=None):

@@ -40,8 +40,8 @@ quant:
     steps: 5
     gamma: !!float 0.999
     required_on_training: true
-    update_bn: false
-  enable_at: &enable_q 0
+    update_bn: true
+  enable_at: &enable_q begin # TODO: 0
   enable_fp: true
   align_zero: &qz false  # TODO: correct gradients for align_zero=True
   fp_layers: &fp_layers
@@ -65,7 +65,7 @@ eval:
   vis: false
   quant: true
   calibrate: false
-  use_ema_stat: false # true
+  use_ema_stat: true
 
 loss:
   type: InvDistilLoss
@@ -117,8 +117,8 @@ ckpt:
   dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/binary_idq_not_quant_all/checkpoints/
 
 resume:
-  path: null
-  load_opt: true
+  path: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/baseline/checkpoints/ckpt_final.pth  # TODO: null
+  load_opt: false
 
 ## Diagnose
 log:
