@@ -1,6 +1,6 @@
 ## Common args
 BATCH_SIZE_PER_GPU: &bs 128
-TOTAL_EPOCHS: &e 90
+TOTAL_EPOCHS: &e 120
 
 ## Dataset
 data:
@@ -8,7 +8,7 @@ data:
     type: ImageNetST
     args:
       img_dir: /mnt/lustre/share/images/
-      meta_dir: /mnt/lustre/lirundong/Data/Meta/imagenet_dev/
+      meta_dir: /mnt/lustre/share/images/meta/
       color: true
   train_loader_conf:
     batch_size: *bs
@@ -27,8 +27,6 @@ data:
 ## Strategy
 distil:
   mode: inv_distil # {null, inv_distil, distil}
-  soft_w: 0.5
-  hard_w: 0.5
   alter_step: &alter_n 1
   zero_momentum: false
 
@@ -44,9 +42,7 @@ quant:
   enable_at: &enable_q 0
   enable_fp: true
   align_zero: &qz false  # TODO: correct gradients for align_zero=True
-  fp_layers: &fp_layers
-    - conv1
-    - fc
+  fp_layers: &fp_layers null
 
 ## Models
 arch:
@@ -56,12 +52,13 @@ arch:
     ka: *qa
     fp_layers: *fp_layers
     align_zero: *qz
-    num_classes: 200
   sync_bn: true
+
+teacher_arch: null
 
 ## Evaluation
 eval:
-  freq: 100
+  freq: 600
   vis: false
   quant: true
   calibrate: false
@@ -99,7 +96,7 @@ opt:
 
 schedule:
   args:
-    milestones: [30, 60]
+    milestones: [60, 90]
     gamma: 0.1
     batch_size: *bs
     warmup_epochs: 4
@@ -110,22 +107,23 @@ schedule:
       # warmup_{...}_epoch is the index of `schedule.milestones`, setup to null means do not tune it
       - ["soft_w", 0.5, 0.5, null, null]
       - ["hard_w", 0.5, 0.5, null, null]
+      - ["ref_w", 0.5, 0.5, null, null]
 
 ## Resume and snapshot
 ckpt:
   freq: 1000
-  dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_not_quant_all/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b128x16_qa/checkpoints/
 
 resume:
-  # path: null
-  path: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_not_quant_all/checkpoints/ckpt_final.pth
+  path: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b128x16_qa/checkpoints/ckpt_step_4000.pth
   load_opt: true
+  load_scheduler: true
 
 ## Diagnose
 log:
   freq: 25
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_not_quant_all/tb_logs/
-  file: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_not_quant_all/train
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b128x16_qa/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b128x16_qa/train
 
 diagnose:
   enabled: false
@@ -135,5 +133,5 @@ diagnose:
   tasks: []
 
 ## Misc
-comment: "idq_not_quant_all"
+comment: "idq_e120_b128x16_qa"
 progress_bar: false

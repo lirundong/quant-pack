@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import collections
-
+from logging import getLogger
 
 __all__ = ["IterationScheduler"]
 
@@ -64,7 +64,6 @@ class IterationScheduler(object):
         self.step(last_iter + 1)
 
         if verbose:
-            from logging import getLogger
             logger = getLogger("global")
             logger.info(str(self))
 
@@ -118,7 +117,14 @@ class IterationScheduler(object):
         return {key: value for key, value in self.__dict__.items() if key != 'optimizer'}
 
     def load_state_dict(self, state_dict):
-        self.__dict__.update(state_dict)
+        if state_dict["iters_per_epoch"] != self.iters_per_epoch:
+            logger = getLogger("global")
+            logger.warning(f"`state_dict` get different `iters_per_epoch` than this experiment, "
+                           f"so we only recover the actual number of gone iterations")
+            last_iter = state_dict["last_iter"] / state_dict["iters_per_epoch"] * self.iters_per_epoch
+            self.step(last_iter)
+        else:
+            self.__dict__.update(state_dict)
 
     def step(self, iteration=None):
         if iteration is None:
@@ -176,4 +182,3 @@ class IterationScheduler(object):
             return True
         else:
             return False
-

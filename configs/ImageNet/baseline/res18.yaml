@@ -38,6 +38,7 @@ quant:
     steps: 25
     gamma: !!float 0.999
     required_on_training: true
+    update_bn: false
   enable_at: &enable_q null # never enable
   enable_fp: true
   align_zero: &qz false
@@ -59,6 +60,7 @@ eval:
   vis: false
   quant: false
   calibrate: false
+  use_ema_stat: true
 
 loss:
   type: CrossEntropyLoss

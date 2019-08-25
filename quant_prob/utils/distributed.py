@@ -1,5 +1,6 @@
 import os
 from time import sleep
+from datetime import timedelta
 
 import netifaces
 import torch
@@ -63,7 +64,7 @@ def dist_init(port):
         os.environ["MASTER_ADDR"] = str(master_ip)
         os.environ["WORLD_SIZE"] = str(n_tasks)
         os.environ["RANK"] = str(proc_id)
-        dist.init_process_group(backend="nccl")
+        dist.init_process_group(backend="nccl", timeout=timedelta(seconds=5))
         print(f"[RANK {proc_id:2d}@GPU{torch.cuda.current_device()}]: "
               f"NCCL master://{master_ip}:{port}", flush=True)
 

@@ -1,6 +1,6 @@
 ## Common args
-BATCH_SIZE_PER_GPU: &bs 128
-TOTAL_EPOCHS: &e 90
+BATCH_SIZE_PER_GPU: &bs 128 # 64
+TOTAL_EPOCHS: &e 30
 
 ## Dataset
 data:
@@ -8,7 +8,7 @@ data:
     type: ImageNetST
     args:
       img_dir: /mnt/lustre/share/images/
-      meta_dir: /mnt/lustre/lirundong/Data/Meta/imagenet_dev/
+      meta_dir: /mnt/lustre/share/images/meta/
       color: true
   train_loader_conf:
     batch_size: *bs
@@ -26,9 +26,7 @@ data:
 
 ## Strategy
 distil:
-  mode: inv_distil # {null, inv_distil, distil}
-  soft_w: 0.5
-  hard_w: 0.5
+  mode: null # {null, inv_distil, distil}
   alter_step: &alter_n 1
   zero_momentum: false
 
@@ -39,10 +37,10 @@ quant:
   calib:
     steps: 5
     gamma: !!float 0.999
-    required_on_training: true
+    required_on_training: false
     update_bn: false
-  enable_at: &enable_q 0
-  enable_fp: true
+  enable_at: &enable_q begin
+  enable_fp: false
   align_zero: &qz false  # TODO: correct gradients for align_zero=True
   fp_layers: &fp_layers
     - conv1
@@ -56,22 +54,19 @@ arch:
     ka: *qa
     fp_layers: *fp_layers
     align_zero: *qz
-    num_classes: 200
   sync_bn: true
 
 ## Evaluation
 eval:
-  freq: 100
+  freq: 600
   vis: false
   quant: true
   calibrate: false
   use_ema_stat: true
 
 loss:
-  type: InvDistilLoss
-  args:
-    soft_weight: null
-    temperature: 1.0
+  type: CrossEntropyLoss
+  args: {}
   topk: [1, 5]
 
 ## Optimization
@@ -79,7 +74,7 @@ param_group:
   conf:
     - type: SGD
       args: &sgd_args
-        lr: 0.05
+        lr: 0.005  # 0.008
         momentum: 0.9
         weight_decay: !!float 1e-4
         nesterov: true
@@ -99,11 +94,11 @@ opt:
 
 schedule:
   args:
-    milestones: [30, 60]
+    milestones: [15, 25]
     gamma: 0.1
     batch_size: *bs
-    warmup_epochs: 4
-    warmup_lr: 0.05
+    warmup_epochs: 2
+    warmup_lr: 0.005
     enable_quant_at: *enable_q
     scheduled_variables:
       # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch
@@ -114,18 +109,18 @@ schedule:
 ## Resume and snapshot
 ckpt:
   freq: 1000
-  dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_not_quant_all/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_ft30_e120_b64x32_nqa/checkpoints/
 
 resume:
-  # path: null
-  path: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_not_quant_all/checkpoints/ckpt_final.pth
-  load_opt: true
+  path: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_nqa/checkpoints/ckpt_final.pth
+  load_opt: false
+  load_scheduler: false
 
 ## Diagnose
 log:
   freq: 25
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_not_quant_all/tb_logs/
-  file: /mnt/lustre/lirundong/Data/quant-prob/tiny_imgnet/res18/idq_not_quant_all/train
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_ft30_e120_b64x32_nqa/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_ft30_e120_b64x32_nqa/train
 
 diagnose:
   enabled: false
@@ -135,5 +130,5 @@ diagnose:
   tasks: []
 
 ## Misc
-comment: "idq_not_quant_all"
+comment: "idq_ft30_e120_b64x32_nqa"
 progress_bar: false

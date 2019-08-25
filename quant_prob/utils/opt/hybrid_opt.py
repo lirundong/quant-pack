@@ -75,7 +75,7 @@ class HybridOpt(object):
 
     def step(self, quant_enabled=False):
         self.step_count += 1
-        if quant_enabled and len(self.optimizers) > 1:
+        if quant_enabled and self.alter_step > 0 and len(self.optimizers) > 1:
             assert self.alter_step is not None
             enabled_idx = (self.step_count // self.alter_step) % len(self.optimizers)
             opt = self.optimizers[enabled_idx]

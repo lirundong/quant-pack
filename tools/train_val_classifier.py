@@ -108,24 +108,28 @@ def main():
         else:
             resume_path = CONF.resume.path
         logger.debug(f"loading checkpoint at: {resume_path}...")
-        checkpoint = torch.load(resume_path, DEVICE)
-        model_dict = checkpoint["model"] if "model" in checkpoint.keys() else checkpoint
-        try:
-            model_without_ddp.load_state_dict(model_dict, strict=False)
-        except RuntimeError as e:
-            logger.warning(e)
-        if CONF.resume.load_opt:
-            logger.debug(f"recovering optimizer...")
-            opt.load_state_dict(checkpoint["opt"])
-            BEST_ACCURACY = checkpoint["accuracy"]
-            scheduler.load_state_dict(checkpoint["scheduler"])
-            train_loader.sampler.set_last_iter(scheduler.last_iter)
-            logger.debug(f"recovered opt at iteration: {scheduler.last_iter}")
+        with open(resume_path, "rb") as f:
+            ckpt = torch.load(f, DEVICE)
+            model_dict = ckpt["model"] if "model" in ckpt.keys() else ckpt
+            try:
+                model_without_ddp.load_state_dict(model_dict, strict=False)
+            except RuntimeError as e:
+                logger.warning(e)
+            if CONF.resume.load_opt:
+                logger.debug(f"recovering optimizer...")
+                opt.load_state_dict(ckpt["opt"])
+            if CONF.resume.load_scheduler:
+                BEST_ACCURACY = ckpt["accuracy"]
+                scheduler.load_state_dict(ckpt["scheduler"])
+                train_loader.sampler.set_last_iter(scheduler.last_iter)
+                logger.debug(f"recovered opt at iteration: {scheduler.last_iter}")
 
-    if CONF.distil.mode == "distil":
-        logger.debug("building FP teacher model...")
-        teacher = deepcopy(model_without_ddp)
-        teacher.to(DEVICE, non_blocking=True)
+    if CONF.teacher_arch is not None:
+        logger.debug(f"building FP teacher model {CONF.teacher_arch.type}...")
+        teacher = modeling.__dict__[CONF.teacher_arch.type](**CONF.teacher_arch.args).to(DEVICE, non_blocking=True)
+        with open(CONF.teacher_arch.ckpt, "rb") as f:
+            ckpt = torch.load(f, DEVICE)
+            teacher.load_state_dict(ckpt)
         for p in teacher.parameters():
             p.requires_grad = False
     else:
@@ -193,21 +197,32 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             if CONF.distil.zero_momentum:
                 logger.debug(f"clear optimizer momentum after calibration")
                 opt.zero_momentum()
-            BEST_ACCURACY = 0.
+            checkpointer.save(
+                model=model_without_ddp.state_dict(),
+                opt=opt.state_dict(),
+                scheduler=scheduler.state_dict(),
+                accuracy=BEST_ACCURACY
+            )
+            checkpointer.write_to_disk("ckpt_calibrated.pth")
+            logger.info(f"calibrated checkpoint has been wrote to disk")
 
         img = img.to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)
         logits = model(img, enable_fp=CONF.quant.enable_fp, enable_quant=scheduler.quant_enabled)
 
-        if CONF.distil.mode == "distil":
+        if teacher_model is not None:
             with torch.no_grad():
                 teacher_logits = teacher_model(img)
+        else:
+            teacher_logits = None
+
+        if CONF.distil.mode == "distil":
             hard_loss, soft_loss = criterion(logits, teacher_logits, label)
             loss = soft_loss + hard_loss
         elif CONF.distil.mode == "inv_distil":
-            hard_loss, soft_loss = criterion(*logits, label)
-            hard_w, soft_w = scheduler.get_scheduled_variables("hard_w", "soft_w")
-            loss = hard_loss * hard_w + soft_loss * soft_w
+            hard_loss, soft_loss, ref_loss = criterion(*logits, label, teacher_logits)
+            hard_w, soft_w, ref_w = scheduler.get_scheduled_variables("hard_w", "soft_w", "ref_w")
+            loss = hard_loss * hard_w + soft_loss * soft_w + ref_loss * ref_w
         else:
             if scheduler.quant_enabled:
                 logit = logits[1]
