@@ -30,5 +30,8 @@ class LinearQuantSTE(Function):
 def cuda_fake_linear_quant(x, lb, ub, k, align_zero):
     with torch.no_grad():
         assert lb.lt(ub).all(), f"invalid quantization range: lb={lb.max().item()}, ub={ub.min().item()}"
-    quantizer = LinearQuantSTE.apply
-    return quantizer(x, lb, ub, k, align_zero)
+    if k == 32:
+        return x
+    else:
+        quantizer = LinearQuantSTE.apply
+        return quantizer(x, lb, ub, k, align_zero)

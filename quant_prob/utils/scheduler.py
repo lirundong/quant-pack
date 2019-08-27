@@ -5,19 +5,18 @@ from logging import getLogger
 
 __all__ = ["IterationScheduler"]
 
-
 ScheduledVariable = collections.namedtuple(
     "ScheduledVariable",
     field_names=["name", "init_value", "target_value",
-                 "warmup_start_step", "warmup_done_step"],
+                 "warmup_start_step", "warmup_done_step", "terminate_step"],
 )
 
 
 class IterationScheduler(object):
-    def __init__(self, optimizer, milestones, dataset_size, batch_size,
+    def __init__(self, optimizer, milestones, dataset_size, batch_size, total_iters,
                  warmup_epochs=0, warmup_lr=0, world_size=1, gamma=0.1,
-                 last_iter=-1, enable_quant_at=None, verbose=False,
-                 scheduled_variables=None):
+                 last_iter=-1, enable_quant_at=None, scheduled_variables=None,
+                 verbose=False):
         batch_size *= world_size
         iters_per_epoch = dataset_size // batch_size
         if last_iter == -1:
@@ -41,22 +40,24 @@ class IterationScheduler(object):
         self.milestones = [m * iters_per_epoch for m in milestones]
         self.warmup_iters = warmup_epochs * iters_per_epoch
         self.iters_per_epoch = iters_per_epoch
+        self.total_iters = total_iters
         self.world_size = world_size
         self.gamma = gamma
         self.optimizer = optimizer
         self.last_iter = last_iter
-        self.in_warmup = self.last_iter < self.warmup_iters
 
         if enable_quant_at == "begin":
-            self.enable_quant_at = 1  # step starts from 1
+            self.enable_quant_intervals = [(1, self.total_iters + 1), ]  # step starts from 1
+        elif enable_quant_at == "segmented":
+            self.enable_quant_intervals = []
         elif enable_quant_at is not None:
-            self.enable_quant_at = self.milestones[enable_quant_at]
+            self.enable_quant_intervals = [(enable_quant_at * self.iters_per_epoch, self.total_iters + 1), ]
         else:
-            self.enable_quant_at = None
+            self.enable_quant_intervals = []
 
-        # other scheduling variables
-        self.variable_schedules = collections.OrderedDict()
+        self.variable_schedules = collections.defaultdict(list)
         self.variable_states = collections.OrderedDict()
+        self.const_variables = collections.OrderedDict()
         if scheduled_variables is not None:
             self.add_scheduled_variables(*scheduled_variables)
 
@@ -77,27 +78,59 @@ class IterationScheduler(object):
             info_tokens += [f"warmup iters: {self.warmup_iters}",
                             f"LR before warmup: {self.base_lrs}",
                             f"LR after warmup: {self.target_lrs}"]
-        if self.enable_quant_at is not None:
-            info_tokens += [f"enable quantization at iter {self.enable_quant_at}"]
+        if len(self.enable_quant_intervals) > 0:
+            info_tokens += [f"enable quantization at iter {self.enable_quant_intervals}"]
 
         return "\n".join(info_tokens)
 
     def add_scheduled_variables(self, *variables):
         for variable in variables:
             assert isinstance(variable, (tuple, list))
-            # fields: name, init_value, target_value, warmup_start_step, warmup_done_step
+            # fields: name, init_value, target_value, warmup_start_step, warmup_done_step, terminate_step
             try:
                 scheduled_variable = ScheduledVariable(*variable)
             except TypeError as e:
                 raise RuntimeError(f"When building {ScheduledVariable.__name__} from `{variable}`: {e}")
-            self.variable_states[scheduled_variable.name] = scheduled_variable.init_value
-            # only enabled if scheduling is required
             if scheduled_variable.warmup_start_step is not None:
+                terminate_step = scheduled_variable.terminate_step * self.iters_per_epoch \
+                    if scheduled_variable.terminate_step != -1 \
+                    else self.total_iters + 1
                 scheduled_variable = scheduled_variable._replace(
-                    warmup_start_step=self.milestones[scheduled_variable.warmup_start_step],
-                    warmup_done_step=self.milestones[scheduled_variable.warmup_done_step],
+                    warmup_start_step=scheduled_variable.warmup_start_step * self.iters_per_epoch,
+                    warmup_done_step=scheduled_variable.warmup_done_step * self.iters_per_epoch,
+                    terminate_step=terminate_step,
                 )
-                self.variable_schedules[scheduled_variable.name] = scheduled_variable
+                self.variable_schedules[scheduled_variable.name].append(scheduled_variable)
+                self.enable_quant_intervals.append((scheduled_variable.warmup_start_step, scheduled_variable.terminate_step, ))
+            else:
+                self.const_variables[scheduled_variable.name] = \
+                    (scheduled_variable.init_value, scheduled_variable.target_value, )
+
+        for k, v in self.variable_schedules.items():
+            self.variable_schedules[k] = sorted(v, key=lambda x: x.warmup_start_step)
+        if len(self.enable_quant_intervals) > 0:
+            self.enable_quant_intervals.sort(key=lambda x: x[0])
+
+    def update_scheduled_variables(self):
+        for var_name, schedules in self.variable_schedules.items():
+            if self.quant_enabled:
+                for schedule in schedules:
+                    if self.last_iter < schedule.warmup_start_step or schedule.terminate_step <= self.last_iter:
+                        continue
+                    elif schedule.warmup_start_step <= self.last_iter < schedule.warmup_done_step:  # warmup
+                        delta = (schedule.target_value - schedule.init_value) \
+                                / (schedule.warmup_done_step - schedule.warmup_start_step + 1)
+                        warmed_steps = self.last_iter - schedule.warmup_start_step
+                        self.variable_states[var_name] = schedule.init_value + delta * warmed_steps
+                    else:  # target value
+                        self.variable_states[var_name] = schedule.target_value
+            else:
+                self.variable_states[var_name] = 0.
+        for var_name, consts in self.const_variables.items():
+            if self.quant_enabled:
+                self.variable_states[var_name] = consts[1]  # target value
+            else:
+                self.variable_states[var_name] = consts[0]  # init value
 
     def get_scheduled_variables(self, *var_names):
         ret = []
@@ -106,12 +139,7 @@ class IterationScheduler(object):
         return ret
 
     def get_scheduled_variable(self, var_name):
-        if var_name in self.variable_states:
-            return self.variable_states[var_name]
-        elif self.quant_enabled:
-            return self.variable_schedules[var_name].target_value
-        else:
-            return self.variable_schedules[var_name].init_value
+        return self.variable_states[var_name]
 
     def state_dict(self):
         return {key: value for key, value in self.__dict__.items() if key != 'optimizer'}
@@ -121,7 +149,7 @@ class IterationScheduler(object):
             logger = getLogger("global")
             logger.warning(f"`state_dict` get different `iters_per_epoch` than this experiment, "
                            f"so we only recover the actual number of gone iterations")
-            last_iter = state_dict["last_iter"] / state_dict["iters_per_epoch"] * self.iters_per_epoch
+            last_iter = state_dict["last_iter"] // state_dict["iters_per_epoch"] * self.iters_per_epoch
             self.step(last_iter)
         else:
             self.__dict__.update(state_dict)
@@ -131,23 +159,10 @@ class IterationScheduler(object):
             iteration = self.last_iter + 1
         self.last_iter = iteration
 
-        # warmup scheduled variables
-        if len(self.variable_schedules) > 0:
-            for var_name, var_schedule in self.variable_schedules.items():
-                if self.last_iter < var_schedule.warmup_start_step:
-                    self.variable_states[var_name] = var_schedule.init_value
-                elif var_schedule.warmup_start_step <= self.last_iter < var_schedule.warmup_done_step:
-                    delta = (var_schedule.target_value - var_schedule.init_value) \
-                            / (var_schedule.warmup_done_step - var_schedule.warmup_start_step + 1)
-                    step = self.last_iter - var_schedule.warmup_start_step
-                    var_current = var_schedule.init_value + delta * step
-                    self.variable_states[var_name] = var_current
-                else:
-                    self.variable_states[var_name] = var_schedule.target_value
+        self.update_scheduled_variables()
 
         # linear warmup LR
         if self.last_iter < self.warmup_iters:
-            self.in_warmup = True
             for param, base_lr, target_lr in zip(self.optimizer.param_groups, self.base_lrs, self.target_lrs):
                 lr_delta = (target_lr - base_lr) / self.warmup_iters
                 lr = base_lr + lr_delta * self.last_iter
@@ -156,7 +171,6 @@ class IterationScheduler(object):
 
         # scale LR by world_size
         if self.last_iter == self.warmup_iters and self.world_size > 1:
-            self.in_warmup = False
             for param_group, target_lr in zip(self.optimizer.param_groups, self.target_lrs):
                 param_group["lr"] = target_lr
             return
@@ -171,14 +185,15 @@ class IterationScheduler(object):
 
     @property
     def quant_enabled(self):
-        if self.enable_quant_at is not None and self.last_iter >= self.enable_quant_at:
+        if len(self.enable_quant_intervals) > 1 and \
+                any(x[0] <= self.last_iter < x[1] for x in self.enable_quant_intervals):
             return True
         else:
             return False
 
     @property
     def do_calibration(self):
-        if self.enable_quant_at is not None and self.last_iter == self.enable_quant_at:
+        if len(self.enable_quant_intervals) > 1 and self.enable_quant_intervals[0][0] == self.last_iter:
             return True
         else:
             return False

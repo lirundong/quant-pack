@@ -224,7 +224,7 @@ class MetricLogger(object):
 
                 if self.tensorboard is not None:
                     for name, meter in self.meters.items():
-                        if name.startswith("eval_"):
+                        if name.startswith("eval_") or name.endswith("_w"):
                             self.tensorboard.add_scalar(f"{log_prefix}/{name}", meter.value, step)
                         else:
                             self.tensorboard.add_scalar(f"{log_prefix}/{name}", meter.avg, step)

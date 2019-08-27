@@ -5,7 +5,6 @@ import logging
 import json
 from argparse import ArgumentParser
 from datetime import datetime
-from copy import deepcopy
 from pprint import pformat
 
 import yaml
@@ -59,7 +58,7 @@ def main():
     DEVICE = torch.device(f"cuda:{torch.cuda.current_device()}") if torch.cuda.is_available() else torch.device("cpu")
 
     torch.manual_seed(SEED)
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = False
 
     logger.debug(f"configurations:\n{pformat(CONF)}")
     logger.debug(f"device: {DEVICE}")
@@ -84,7 +83,10 @@ def main():
 
     param_groups = model.get_param_group(*CONF.param_group.groups, **CONF.param_group.args)
     opt = HybridOpt(param_groups, CONF.param_group.conf, **CONF.opt.args)
-    scheduler = IterationScheduler(opt.optimizers[0], dataset_size=len(train_set), world_size=WORLD_SIZE,
+    scheduler = IterationScheduler(opt.optimizers[0],
+                                   dataset_size=len(train_set),
+                                   world_size=WORLD_SIZE,
+                                   total_iters=len(train_loader),
                                    **CONF.schedule.args)
 
     if CONF.dist:
@@ -222,6 +224,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
         elif CONF.distil.mode == "inv_distil":
             hard_loss, soft_loss, ref_loss = criterion(*logits, label, teacher_logits)
             hard_w, soft_w, ref_w = scheduler.get_scheduled_variables("hard_w", "soft_w", "ref_w")
+            metric_logger.update(hard_w=hard_w, soft_w=soft_w, ref_w=ref_w)
             loss = hard_loss * hard_w + soft_loss * soft_w + ref_loss * ref_w
         else:
             if scheduler.quant_enabled:
@@ -256,10 +259,10 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
                 progress_bar=CONF.progress_bar
             )
             metric_logger.update(
-                eval_fp_top1=(eval_fp_top1, 1),
-                eval_fp_top5=(eval_fp_top5, 1),
-                eval_q_top1=(eval_q_top1, 1),
-                eval_q_top5=(eval_q_top5, 1)
+                eval_fp_top1=eval_fp_top1,
+                eval_fp_top5=eval_fp_top5,
+                eval_q_top1=eval_q_top1,
+                eval_q_top5=eval_q_top5,
             )
 
             is_best = eval_q_top1 > BEST_ACCURACY if scheduler.quant_enabled else eval_fp_top1 > BEST_ACCURACY
