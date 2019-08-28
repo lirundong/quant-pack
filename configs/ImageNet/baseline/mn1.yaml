@@ -1,0 +1,132 @@
+## Common args
+BATCH_SIZE_PER_GPU: &bs 64 # 64 for 32 workers, 128 for 16 workers
+TOTAL_EPOCHS: &e 120
+
+## Dataset
+data:
+  dataset:
+    type: ImageNetST
+    args:
+      img_dir: /mnt/lustre/share/images/
+      meta_dir: /mnt/lustre/share/images/meta/
+      color: true
+  train_loader_conf:
+    batch_size: *bs
+    shuffle: false
+    pin_memory: true
+    num_workers: 2
+  train_sampler_conf:
+    batch_size: *bs
+    total_epoch: *e
+  val_loader_conf:
+    batch_size: *bs
+    shuffle: false
+    pin_memory: true
+    num_workers: 1
+
+## Strategy
+distil:
+  mode: null # {null, inv_distil, distil}
+  alter_step: &alter_n null
+  zero_momentum: false
+
+quant:
+  bitwidth:
+    w: &qw 4
+    a: &qa 4
+  calib:
+    steps: 5
+    gamma: !!float 0.999
+    required_on_training: false
+    update_bn: false
+  enable_at: &enable_q null
+  enable_fp: true
+  align_zero: &qz false  # TODO: correct gradients for align_zero=True
+  fp_layers: &fp_layers null
+
+## Models
+arch:
+  type: IDQMobileNetV1
+  args:
+    kw: *qw
+    ka: *qa
+    fp_layers: *fp_layers
+    align_zero: *qz
+  sync_bn: false
+
+teacher_arch: null
+
+## Evaluation
+eval:
+  freq: 600
+  vis: false
+  quant: false
+  calibrate: false
+  use_ema_stat: true
+
+loss:
+  type: CrossEntropyLoss
+  args: {}
+  topk: [1, 5]
+
+## Optimization
+param_group:
+  conf:
+    - type: SGD
+      args: &sgd_args
+        lr: 0.025
+        momentum: 0.9
+        weight_decay: !!float 1e-5
+        nesterov: true
+    - type: Adam
+      args: &adam_args
+        lr: 0.001
+        weight_decay: 0.0
+  groups:
+    - <<: *sgd_args
+    - <<: *adam_args
+  args:
+    ft_layers: null
+
+opt:
+  args:
+    alter_step: *alter_n
+
+schedule:
+  args:
+    milestones: [60, 90]
+    gamma: 0.1
+    batch_size: *bs
+    warmup_epochs: 4
+    warmup_lr: 0.2
+    enable_quant_at: *enable_q
+    scheduled_variables: null
+      # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch
+      # warmup_{...}_epoch is the index of `schedule.milestones`
+      # set to `null` means use init_value for FP training, target_value for Q training
+
+## Resume and snapshot
+ckpt:
+  freq: 1000
+  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/mn1_baseline/checkpoints/
+
+resume:
+  path: null
+  load_opt: true
+
+## Diagnose
+log:
+  freq: 100
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/mn1_baseline/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/mn1_baseline/train
+
+diagnose:
+  enabled: false
+  diagnoser:
+    type: null
+    args: {}
+  tasks: []
+
+## Misc
+comment: "idq_mn1_baseline"
+progress_bar: false
