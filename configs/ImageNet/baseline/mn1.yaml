@@ -1,5 +1,5 @@
 ## Common args
-BATCH_SIZE_PER_GPU: &bs 64 # 64 for 32 workers, 128 for 16 workers
+BATCH_SIZE_PER_GPU: &bs 128 # 64 for 32 workers, 128 for 16 workers
 TOTAL_EPOCHS: &e 120
 
 ## Dataset
@@ -74,7 +74,7 @@ param_group:
   conf:
     - type: SGD
       args: &sgd_args
-        lr: 0.025
+        lr: 0.05
         momentum: 0.9
         weight_decay: !!float 1e-5
         nesterov: true

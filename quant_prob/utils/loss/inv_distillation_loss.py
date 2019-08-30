@@ -9,7 +9,7 @@ __all__ = ["InvDistilLoss"]
 
 class InvDistilLoss(nn.Module):
 
-    def __init__(self, soft_weight, temperature, soft_loss_type="KL"):
+    def __init__(self, soft_weight, temperature, soft_loss_type="KL", detach_ref=False):
         assert soft_loss_type in ("KL", "L2", "cos")
         if soft_weight is not None:
             assert 0. <= soft_weight <= 1.
@@ -17,6 +17,7 @@ class InvDistilLoss(nn.Module):
         self.soft_weight = soft_weight
         self.temperature = temperature
         self.soft_loss_type = soft_loss_type
+        self.detach_ref = detach_ref
 
     def forward(self, logits_fp, logits_q, labels, logits_ref=None):
         if logits_fp is not None:
@@ -25,20 +26,25 @@ class InvDistilLoss(nn.Module):
             hard_loss = torch.tensor(0., device=labels.device)
 
         if logits_q is not None:
+            if self.detach_ref:
+                logits_fp_ref = logits_fp.detach()  # reference distribution should not be tuned
+            else:
+                logits_fp_ref = logits_fp
+
             if self.soft_loss_type == "KL":
                 # manually batch_mean
                 batch_size = logits_q.size(0)
                 soft_loss = F.kl_div(F.log_softmax(logits_q / self.temperature, dim=1),
-                                     F.softmax(logits_fp / self.temperature, dim=1),
+                                     F.softmax(logits_fp_ref / self.temperature, dim=1),
                                      reduction="sum") \
                             / batch_size * pow(self.temperature, 2)
             elif self.soft_loss_type == "L2":
-                soft_loss = F.mse_loss(F.log_softmax(logits_fp / self.temperature),
+                soft_loss = F.mse_loss(F.log_softmax(logits_fp_ref / self.temperature),
                                        F.log_softmax(logits_q / self.temperature)) \
                             * pow(self.temperature, 2)
             elif self.soft_loss_type == "cos":
-                cos_label = torch.ones(logits_fp.size(0), device=logits_fp.device)
-                soft_loss = F.cosine_embedding_loss(logits_fp, logits_q, cos_label)
+                cos_label = torch.ones(logits_fp_ref.size(0), device=logits_fp_ref.device)
+                soft_loss = F.cosine_embedding_loss(logits_fp_ref, logits_q, cos_label)
             else:
                 raise ValueError(f"unknown soft loss type: {self.soft_loss_type}")
 

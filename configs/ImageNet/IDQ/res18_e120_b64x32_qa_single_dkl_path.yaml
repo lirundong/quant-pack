@@ -1,5 +1,5 @@
 ## Common args
-BATCH_SIZE_PER_GPU: &bs 64
+BATCH_SIZE_PER_GPU: &bs 128
 TOTAL_EPOCHS: &e 120
 
 ## Dataset
@@ -39,7 +39,7 @@ quant:
     gamma: !!float 0.999
     required_on_training: true
     update_bn: false
-  enable_at: &enable_q segmented  # {#milestone, segmented, begin}
+  enable_at: &enable_q 60
   enable_fp: true
   align_zero: &qz false  # TODO: correct gradients for align_zero=True
   fp_layers: &fp_layers null
@@ -69,6 +69,7 @@ loss:
   args:
     soft_weight: null
     temperature: 1.0
+    detach_ref: true
   topk: [1, 5]
 
 ## Optimization
@@ -76,7 +77,7 @@ param_group:
   conf:
     - type: SGD
       args: &sgd_args
-        lr: 0.025
+        lr: 0.05
         momentum: 0.9
         weight_decay: !!float 1e-4
         nesterov: true
@@ -103,30 +104,27 @@ schedule:
     warmup_lr: 0.2
     enable_quant_at: *enable_q
     scheduled_variables:
-      # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch, terminate_epoch=-1
+      # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch
       # warmup_{...}_epoch is the index of `schedule.milestones`, setup to null means do not tune it
-      # multiple schedule for one variable is acceptable, which will thus be segmented by `terminate_epoch`s
-      - ["soft_w", 0.0, 0.5, 10, 15, 60]
-      - ["soft_w", 0.0, 0.5, 65, 70, 90]
-      - ["soft_w", 0.0, 0.5, 95, 100, -1]
-      - ["hard_w", 1.0, 1.0, null, null, -1]
+      - ["soft_w", 0.5, 0.5, null, null, -1]
+      - ["hard_w", 0.5, 0.5, null, null, -1]
       - ["ref_w", 0.5, 0.5, null, null, -1]
 
 ## Resume and snapshot
 ckpt:
   freq: 1000
-  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_qa_segment_w/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_qa_single_dkl_path/checkpoints/
 
 resume:
-  path: null
+  path: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_qa/checkpoints/ckpt_calibrated.pth
   load_opt: true
   load_scheduler: true
 
 ## Diagnose
 log:
   freq: 100
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_qa_segment_w/tb_logs/
-  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_qa_segment_w/train
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_qa_qa_single_dkl_path/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_qa_qa_single_dkl_path/train
 
 diagnose:
   enabled: false
@@ -136,5 +134,5 @@ diagnose:
   tasks: []
 
 ## Misc
-comment: "idq_e120_b64x32_qa_segment_w"
+comment: "idq_e120_b64x32_qa_qa_single_dkl_path"
 progress_bar: false

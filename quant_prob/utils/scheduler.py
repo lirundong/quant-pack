@@ -185,7 +185,7 @@ class IterationScheduler(object):
 
     @property
     def quant_enabled(self):
-        if len(self.enable_quant_intervals) > 1 and \
+        if len(self.enable_quant_intervals) > 0 and \
                 any(x[0] <= self.last_iter < x[1] for x in self.enable_quant_intervals):
             return True
         else:
@@ -193,7 +193,7 @@ class IterationScheduler(object):
 
     @property
     def do_calibration(self):
-        if len(self.enable_quant_intervals) > 1 and self.enable_quant_intervals[0][0] == self.last_iter:
+        if len(self.enable_quant_intervals) > 0 and self.enable_quant_intervals[0][0] == self.last_iter:
             return True
         else:
             return False

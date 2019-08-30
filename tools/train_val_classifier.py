@@ -87,6 +87,7 @@ def main():
                                    dataset_size=len(train_set),
                                    world_size=WORLD_SIZE,
                                    total_iters=len(train_loader),
+                                   verbose=CONF.debug,
                                    **CONF.schedule.args)
 
     if CONF.dist:
