@@ -113,7 +113,7 @@ class IterationScheduler(object):
 
     def update_scheduled_variables(self):
         for var_name, schedules in self.variable_schedules.items():
-            if self.quant_enabled:
+            if self.in_quant_interval:
                 for schedule in schedules:
                     if self.last_iter < schedule.warmup_start_step or schedule.terminate_step <= self.last_iter:
                         continue
@@ -185,8 +185,15 @@ class IterationScheduler(object):
 
     @property
     def quant_enabled(self):
+        if len(self.enable_quant_intervals) > 0 and self.enable_quant_intervals[0][0] <= self.last_iter:
+            return True
+        else:
+            return False
+
+    @property
+    def in_quant_interval(self):
         if len(self.enable_quant_intervals) > 0 and \
-                any(x[0] <= self.last_iter < x[1] for x in self.enable_quant_intervals):
+                any(interval[0] <= self.last_iter < interval[1] for interval in self.enable_quant_intervals):
             return True
         else:
             return False

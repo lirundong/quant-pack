@@ -1,5 +1,5 @@
 ## Common args
-BATCH_SIZE_PER_GPU: &bs 128 # 64 for 32 workers, 128 for 16 workers
+BATCH_SIZE_PER_GPU: &bs 64
 TOTAL_EPOCHS: &e 120
 
 ## Dataset
@@ -26,8 +26,8 @@ data:
 
 ## Strategy
 distil:
-  mode: null # {null, inv_distil, distil}
-  alter_step: &alter_n null
+  mode: inv_distil # {null, inv_distil, distil}
+  alter_step: &alter_n 1
   zero_momentum: false
 
 quant:
@@ -37,22 +37,22 @@ quant:
   calib:
     steps: 5
     gamma: !!float 0.999
-    required_on_training: false
+    required_on_training: true
     update_bn: false
-  enable_at: &enable_q null
+  enable_at: &enable_q segmented  # {#milestone, segmented, begin}
   enable_fp: true
   align_zero: &qz false  # TODO: correct gradients for align_zero=True
   fp_layers: &fp_layers null
 
 ## Models
 arch:
-  type: IDQMobileNetV1
+  type: resnet18_idq
   args:
     kw: *qw
     ka: *qa
     fp_layers: *fp_layers
     align_zero: *qz
-  sync_bn: false
+  sync_bn: true
 
 teacher_arch: null
 
@@ -60,13 +60,15 @@ teacher_arch: null
 eval:
   freq: 600
   vis: false
-  quant: false
+  quant: true
   calibrate: false
   use_ema_stat: true
 
 loss:
-  type: CrossEntropyLoss
-  args: {}
+  type: InvDistilLoss
+  args:
+    soft_weight: null
+    temperature: 1.0
   topk: [1, 5]
 
 ## Optimization
@@ -74,9 +76,9 @@ param_group:
   conf:
     - type: SGD
       args: &sgd_args
-        lr: 0.05
+        lr: 0.025
         momentum: 0.9
-        weight_decay: !!float 1e-5
+        weight_decay: !!float 1e-4
         nesterov: true
     - type: Adam
       args: &adam_args
@@ -100,15 +102,20 @@ schedule:
     warmup_epochs: 4
     warmup_lr: 0.2
     enable_quant_at: *enable_q
-    scheduled_variables: null
-      # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch
-      # warmup_{...}_epoch is the index of `schedule.milestones`
-      # set to `null` means use init_value for FP training, target_value for Q training
+    scheduled_variables:
+      # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch, terminate_epoch=-1
+      # warmup_{...}_epoch is the index of `schedule.milestones`, setup to null means do not tune it
+      # multiple schedule for one variable is acceptable, which will thus be segmented by `terminate_epoch`s
+      - ["soft_w", 0.0, 0.5, 10, 15, 60]
+      - ["soft_w", 0.0, 0.5, 65, 70, 90]
+      - ["soft_w", 0.0, 0.5, 95, 100, -1]
+      - ["hard_w", 0.5, 0.5, null, null, -1]
+      - ["ref_w", 0.5, 0.5, null, null, -1]
 
 ## Resume and snapshot
 ckpt:
   freq: 1000
-  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/mn1_baseline/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_qa_segment_w_hw0.5/checkpoints/
 
 resume:
   path: null
@@ -118,8 +125,8 @@ resume:
 ## Diagnose
 log:
   freq: 100
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/mn1_baseline/tb_logs/
-  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/mn1_baseline/train
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_qa_segment_w_hw0.5/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_qa_segment_w_hw0.5/train
 
 diagnose:
   enabled: false
@@ -129,5 +136,5 @@ diagnose:
   tasks: []
 
 ## Misc
-comment: "idq_mn1_baseline"
+comment: "idq_e120_b64x32_qa_segment_w_hw0.5"
 progress_bar: false
