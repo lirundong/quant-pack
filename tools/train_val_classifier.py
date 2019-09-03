@@ -52,16 +52,24 @@ def main():
             update_config(CONF, args.extra)
         CONF = EasyDict(CONF)
 
-    RANK, WORLD_SIZE = dist_init(CONF.port)
+    RANK, WORLD_SIZE = dist_init(CONF.port, CONF.arch.gpu_per_model)
     CONF.dist = WORLD_SIZE > 1
+
+    if CONF.arch.gpu_per_model == 1:
+        fp_device = get_devices(CONF.arch.gpu_per_model)
+        q_device = fp_device
+    else:
+        fp_device, q_device = get_devices(CONF.arch.gpu_per_model)
+    DEVICE = fp_device
+
     logger = init_log(LOGGER_NAME, CONF.debug, f"{CONF.log.file}_{EXP_DATETIME}.log")
-    DEVICE = torch.device(f"cuda:{torch.cuda.current_device()}") if torch.cuda.is_available() else torch.device("cpu")
 
     torch.manual_seed(SEED)
     torch.backends.cudnn.benchmark = False
 
     logger.debug(f"configurations:\n{pformat(CONF)}")
-    logger.debug(f"device: {DEVICE}")
+    logger.debug(f"fp device: {fp_device}")
+    logger.debug(f"quant device: {q_device}")
 
     logger.debug(f"building dataset {CONF.data.dataset.type}...")
     train_set, val_set = get_dataset(CONF.data.dataset.type, **CONF.data.dataset.args)
@@ -76,7 +84,7 @@ def main():
                             **CONF.data.val_loader_conf)
 
     logger.debug(f"building model `{CONF.arch.type}`...")
-    model = modeling.__dict__[CONF.arch.type](**CONF.arch.args).to(DEVICE, non_blocking=True)
+    model = modeling.__dict__[CONF.arch.type](devices=(fp_device, q_device), **CONF.arch.args)
     if CONF.dist and CONF.arch.sync_bn:
         model = SyncBatchNorm.convert_sync_batchnorm(model)
     logger.debug(f"build model {model.__class__.__name__} done:\n{model}")
@@ -92,7 +100,7 @@ def main():
 
     if CONF.dist:
         logger.debug(f"building DDP model...")
-        model, model_without_ddp = get_ddp_model(model)
+        model, model_without_ddp = get_ddp_model(model, devices=(fp_device, q_device))
     else:
         model_without_ddp = model
 
@@ -112,10 +120,11 @@ def main():
             resume_path = CONF.resume.path
         logger.debug(f"loading checkpoint at: {resume_path}...")
         with open(resume_path, "rb") as f:
-            ckpt = torch.load(f, DEVICE)
+            ckpt = torch.load(f)
             model_dict = ckpt["model"] if "model" in ckpt.keys() else ckpt
             try:
                 model_without_ddp.load_state_dict(model_dict, strict=False)
+                model_without_ddp.to_proper_device()
             except RuntimeError as e:
                 logger.warning(e)
             if CONF.resume.load_opt:
@@ -209,7 +218,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             checkpointer.write_to_disk("ckpt_calibrated.pth")
             logger.info(f"calibrated checkpoint has been wrote to disk")
 
-        img = img.to(DEVICE, non_blocking=True)
+        # img will be mapped to proper device(s) in model.forward
         label = label.to(DEVICE, non_blocking=True)
         logits = model(img, enable_fp=CONF.quant.enable_fp, enable_quant=scheduler.quant_enabled)
 

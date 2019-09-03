@@ -18,9 +18,10 @@ __all__ = ["resnet18_idq", "resnet50_idq", "resnet101_idq"]
 
 class ResNetIDQ(ResNet, IDQ):
 
-    def __init__(self, block, layers, num_classes=1000, kw=4, ka=4, fp_layers=None, align_zero=True):
+    def __init__(self, block, layers, num_classes=1000, kw=4, ka=4, fp_layers=None, align_zero=True,
+                 devices=None, non_blocking=False):
         ResNet.__init__(self, block, layers, num_classes)
-        IDQ.__init__(self, ResNet.forward, kw, ka, fp_layers, align_zero)
+        IDQ.__init__(self, ResNet.forward, kw, ka, fp_layers, align_zero, devices, non_blocking)
 
 
 def _resnet_idq(arch, block, layers, pretrained, progress, **kwargs):
