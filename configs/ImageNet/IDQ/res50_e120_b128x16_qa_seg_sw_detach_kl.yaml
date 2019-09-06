@@ -1,5 +1,5 @@
 ## Common args
-BATCH_SIZE_PER_GPU: &bs 64
+BATCH_SIZE_PER_GPU: &bs 128
 TOTAL_EPOCHS: &e 120
 
 ## Dataset
@@ -59,7 +59,7 @@ teacher_arch: null
 
 ## Evaluation
 eval:
-  freq: 1200
+  freq: 600
   vis: false
   quant: true
   calibrate: false
@@ -78,7 +78,7 @@ param_group:
   conf:
     - type: SGD
       args: &sgd_args
-        lr: 0.025
+        lr: 0.05
         momentum: 0.9
         weight_decay: !!float 1e-4
         nesterov: true
@@ -117,7 +117,7 @@ schedule:
 ## Resume and snapshot
 ckpt:
   freq: 1000
-  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/idq_e120_b64x16_qa_seg_sw_detach_kl/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/idq_e120_b128x16_qa_seg_sw_detach_kl/checkpoints/
 
 resume:
   path: null
@@ -127,8 +127,8 @@ resume:
 ## Diagnose
 log:
   freq: 100
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/idq_e120_b64x16_qa_seg_sw_detach_kl/tb_logs/
-  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/idq_e120_b64x16_qa_seg_sw_detach_kl/train
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/idq_e120_b128x16_qa_seg_sw_detach_kl/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/idq_e120_b128x16_qa_seg_sw_detach_kl/train
 
 diagnose:
   enabled: false
@@ -138,5 +138,5 @@ diagnose:
   tasks: []
 
 ## Misc
-comment: "idq_e120_b64x16_qa_seg_sw_detach_kl"
+comment: "idq_e120_b128x16_qa_seg_sw_detach_kl"
 progress_bar: false

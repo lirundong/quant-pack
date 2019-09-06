@@ -46,7 +46,7 @@ quant:
 
 ## Models
 arch:
-  type: resnet50_idq
+  type: mobilenet_v2_idq
   args:
     kw: *qw
     ka: *qa
@@ -80,7 +80,7 @@ param_group:
       args: &sgd_args
         lr: 0.025
         momentum: 0.9
-        weight_decay: !!float 1e-4
+        weight_decay: !!float 1e-5
         nesterov: true
     - type: Adam
       args: &adam_args
@@ -117,7 +117,7 @@ schedule:
 ## Resume and snapshot
 ckpt:
   freq: 1000
-  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/idq_e120_b64x16_qa_seg_sw_detach_kl/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/mn2/idq_e120_b64x16_qa_seg_sw_detach_kl/checkpoints/
 
 resume:
   path: null
@@ -127,8 +127,8 @@ resume:
 ## Diagnose
 log:
   freq: 100
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/idq_e120_b64x16_qa_seg_sw_detach_kl/tb_logs/
-  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res50/idq_e120_b64x16_qa_seg_sw_detach_kl/train
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/mn2/idq_e120_b64x16_qa_seg_sw_detach_kl/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/mn2/idq_e120_b64x16_qa_seg_sw_detach_kl/train
 
 diagnose:
   enabled: false

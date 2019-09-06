@@ -169,20 +169,18 @@ class IDQ:
         def quant_conv2d_forward(m, x):
             assert isinstance(m, nn.Conv2d)
             name = self.layer_names[id(m)]
-            if x.device != self.q_device:
-                x = x.to(self.q_device)
+            x = x.to(self.q_device)
             w = m.weight.to(self.q_device)
-            bias = m.bias.to(self.q_device)
+            bias = m.bias.to(self.q_device) if m.bias is not None else None
             qx, qw = do_fake_quant(name, w, x)
             return F.conv2d(qx, qw, bias, m.stride, m.padding, m.dilation, m.groups)
 
         def quant_linear_forward(m, x):
             assert isinstance(m, nn.Linear)
             name = self.layer_names[id(m)]
-            if x.device != self.q_device:
-                x = x.to(self.q_device)
+            x = x.to(self.q_device)
             w = m.weight.to(self.q_device)
-            bias = m.bias.to(self.q_device)
+            bias = m.bias.to(self.q_device) if m.bias is not None else None
             qx, qw = do_fake_quant(name, w, x)
             return F.linear(qx, qw, bias)
 

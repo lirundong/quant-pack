@@ -33,9 +33,7 @@ else
     echo "evaluating with configure \`$CONF_FILE\`"
 fi
 
-#source $HOME/.local/bin/env_spring.sh
-#source activate torch-1.1-cuda-9.0
-source r0.3.0
+source torch-1.2-cuda-9.0.sh
 
 export PYTHONPATH=$ROOT:$PYTHONPATH
 

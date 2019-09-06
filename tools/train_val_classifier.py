@@ -52,7 +52,7 @@ def main():
             update_config(CONF, args.extra)
         CONF = EasyDict(CONF)
 
-    RANK, WORLD_SIZE = dist_init(CONF.port, CONF.arch.gpu_per_model)
+    RANK, WORLD_SIZE = dist_init(CONF.port, CONF.arch.gpu_per_model, CONF.debug)
     CONF.dist = WORLD_SIZE > 1
 
     if CONF.arch.gpu_per_model == 1:
@@ -65,7 +65,7 @@ def main():
     logger = init_log(LOGGER_NAME, CONF.debug, f"{CONF.log.file}_{EXP_DATETIME}.log")
 
     torch.manual_seed(SEED)
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.benchmark = True
 
     logger.debug(f"configurations:\n{pformat(CONF)}")
     logger.debug(f"fp device: {fp_device}")
@@ -100,7 +100,7 @@ def main():
 
     if CONF.dist:
         logger.debug(f"building DDP model...")
-        model, model_without_ddp = get_ddp_model(model, devices=(fp_device, q_device))
+        model, model_without_ddp = get_ddp_model(model, devices=(fp_device, q_device), debug=CONF.debug)
     else:
         model_without_ddp = model
 
@@ -305,7 +305,6 @@ def evaluate(model, loader, enable_fp=True, enable_quant=True, verbose=False, pr
 
     for img, label in loader:
         n = img.size(0)
-        img = img.to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)
         logits = model(img, enable_fp=enable_fp, enable_quant=enable_quant)
         (fp_top1, fp_top5), (q_top1, q_top5) = accuracy(logits, label, topk=CONF.loss.topk)

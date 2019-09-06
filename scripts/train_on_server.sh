@@ -36,7 +36,7 @@ else
     echo "training with configure \`$CONF_FILE\`"
 fi
 
-source r0.3.0
+source torch-1.2-cuda-9.0.sh
 
 export PYTHONPATH=$ROOT:$PYTHONPATH
 
