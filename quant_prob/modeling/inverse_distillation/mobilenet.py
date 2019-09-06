@@ -67,16 +67,18 @@ class MobileNetV1(nn.Module):
 
 class IDQMobileNetV1(MobileNetV1, IDQ):
 
-    def __init__(self, num_classes=1000, width_mult=1.0, kw=4, ka=4, fp_layers=None, align_zero=True):
+    def __init__(self, num_classes=1000, width_mult=1.0, kw=4, ka=4, fp_layers=None, align_zero=True,
+                 devices=None, non_blocking=False):
         MobileNetV1.__init__(self, num_classes, width_mult)
-        IDQ.__init__(self, MobileNetV1.forward, kw, ka, fp_layers, align_zero)
+        IDQ.__init__(self, MobileNetV1.forward, kw, ka, fp_layers, align_zero, devices, non_blocking)
 
 
 class IDQMobileNetV2(MobileNetV2, IDQ):
 
-    def __init__(self, num_classes=1000, width_mult=1.0, kw=4, ka=4, fp_layers=None, align_zero=True):
+    def __init__(self, num_classes=1000, width_mult=1.0, kw=4, ka=4, fp_layers=None, align_zero=True,
+                 devices=None, non_blocking=False):
         MobileNetV2.__init__(self, num_classes, width_mult)
-        IDQ.__init__(self, MobileNetV2.forward, kw, ka, fp_layers, align_zero)
+        IDQ.__init__(self, MobileNetV2.forward, kw, ka, fp_layers, align_zero, devices, non_blocking)
 
 
 def mobilenet_v2_idq(pretrained=False, progress=True, **kwargs):
