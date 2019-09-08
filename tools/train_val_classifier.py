@@ -52,7 +52,7 @@ def main():
             update_config(CONF, args.extra)
         CONF = EasyDict(CONF)
 
-    RANK, WORLD_SIZE = dist_init(CONF.port, CONF.arch.gpu_per_model, CONF.debug)
+    RANK, WORLD_SIZE = dist_init(CONF.port, CONF.arch.gpu_per_model)
     CONF.dist = WORLD_SIZE > 1
 
     if CONF.arch.gpu_per_model == 1:
@@ -120,7 +120,7 @@ def main():
             resume_path = CONF.resume.path
         logger.debug(f"loading checkpoint at: {resume_path}...")
         with open(resume_path, "rb") as f:
-            ckpt = torch.load(f)
+            ckpt = torch.load(f, DEVICE)
             model_dict = ckpt["model"] if "model" in ckpt.keys() else ckpt
             try:
                 model_without_ddp.load_state_dict(model_dict, strict=False)

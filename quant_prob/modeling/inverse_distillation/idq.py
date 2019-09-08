@@ -5,12 +5,14 @@ from copy import copy
 from types import MethodType
 from logging import getLogger
 from functools import wraps
+from contextlib import contextmanager
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Parameter
+from torch.nn.modules._functions import SyncBatchNorm as sync_batch_norm
 
 if torch.cuda.is_available():
     from quant_prob.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant
@@ -49,10 +51,11 @@ class IDQ:
             assert len(devices) == 2
             self.fp_device = devices[0]
             self.q_device = devices[1]
+        self.non_blocking = non_blocking
 
-        # Since ordinary hooks do not get invoked if module is wrapped by DDP, we
-        # re-initialize them in `forward` at specific iterations. Currently we
-        # only used `forward_hooks`.
+        # Since ordinary hooks do not get invoked when module being wrapped by
+        # DDP, we re-initialize them in `forward` at specific iterations.
+        # Currently we only use `forward_hooks`.
         self.ddp_forward_hooks = []
         self.ddp_hook_handles = []
 
@@ -65,7 +68,7 @@ class IDQ:
         self.forward = _do_forward
 
         self._init_quant_param()
-        self.to_proper_device(non_blocking)
+        self.to_proper_device()
 
     def _init_quant_param(self):
         for n, m in self.named_modules():
@@ -78,8 +81,7 @@ class IDQ:
                 self.activation_quant_param[f"{n}_act_lb".replace(".", "_")] = Parameter(torch.tensor(0.))
                 self.activation_quant_param[f"{n}_act_ub".replace(".", "_")] = Parameter(torch.tensor(0.))
 
-    @staticmethod
-    def _update_stat(input, name, percentile, param_bank):
+    def _update_stat(self, input, name, percentile, param_bank):
         assert torch.is_tensor(input)
         assert not input.requires_grad
         if percentile == 1.:
@@ -94,14 +96,14 @@ class IDQ:
             dist.all_reduce(v)
             v.div_(dist.get_world_size())
         try:
-            param_bank[name].data = v
+            param_bank[name].detach_().copy_(v, non_blocking=self.non_blocking)
         except KeyError as e:
             raise RuntimeError(f"update quant-param which not seen in init: `{e}`")
 
     def _update_weight_quant_param(self):
         for n, m in self.named_modules():
             if isinstance(m, (nn.Conv2d, nn.Linear)):
-                weight_view = m.weight.detach().view(-1).to(self.q_device)
+                weight_view = m.weight.detach().reshape(-1)
                 self._update_stat(weight_view, f"{n}_weight_lb".replace(".", "_"), 0., self.weight_quant_param)
                 self._update_stat(weight_view, f"{n}_weight_ub".replace(".", "_"), 1., self.weight_quant_param)
 
@@ -117,7 +119,8 @@ class IDQ:
                 input = input[0]
             if input.requires_grad:
                 input = input.detach()
-            input_view, _ = input.view(-1).sort().to(self.q_device)
+            input_view, _ = input.reshape(-1).sort()
+            input_view = input_view.to(self.fp_device, non_blocking=self.non_blocking)
             self._update_stat(input_view, f"{name}_act_ub".replace(".", "_"), gamma, self.activation_quant_param)
             self._update_stat(input_view, f"{name}_act_lb".replace(".", "_"), 1. - gamma, self.activation_quant_param)
 
@@ -146,8 +149,8 @@ class IDQ:
                 mean = input_view.mean()
                 var = input_view.var()
 
-            module.running_mean.copy_(mean.to(self.fp_device))
-            module.running_var.copy_(var.to(self.fp_device))
+            module.running_mean.copy_(mean)
+            module.running_var.copy_(var)
 
         assert len(self.ddp_forward_hooks) == 0
         self.ddp_forward_hooks.append(update_act_stat_hook)
@@ -155,13 +158,21 @@ class IDQ:
             self.ddp_forward_hooks.append(update_bn_stat_hook)
 
     def _wrap_forward(self):
+        # TODO: refactor `prepare_quant_forward` to a context manager and move
+        #       it out of this wrapper
 
         def do_fake_quant(name, weight, x):
-            assert weight.device == x.device
+            # TODO: looks ugly, can we find something like context manager to
+            #       do the device mapping?
+            assert weight.device == x.device == self.q_device
             w_lb = self.weight_quant_param[f"{name}_weight_lb".replace(".", "_")]
             w_ub = self.weight_quant_param[f"{name}_weight_ub".replace(".", "_")]
             x_lb = self.activation_quant_param[f"{name}_act_lb".replace(".", "_")]
             x_ub = self.activation_quant_param[f"{name}_act_ub".replace(".", "_")]
+            w_lb = w_lb.to(self.q_device, non_blocking=self.non_blocking)
+            w_ub = w_ub.to(self.q_device, non_blocking=self.non_blocking)
+            x_lb = x_lb.to(self.q_device, non_blocking=self.non_blocking)
+            x_ub = x_ub.to(self.q_device, non_blocking=self.non_blocking)
             qw = quantizer(weight, w_lb, w_ub, self.kw, self.align_zero)
             qx = quantizer(x, x_lb, x_ub, self.ka, self.align_zero)
             return qx, qw
@@ -169,20 +180,108 @@ class IDQ:
         def quant_conv2d_forward(m, x):
             assert isinstance(m, nn.Conv2d)
             name = self.layer_names[id(m)]
-            x = x.to(self.q_device)
-            w = m.weight.to(self.q_device)
-            bias = m.bias.to(self.q_device) if m.bias is not None else None
+            x = x.to(self.q_device, non_blocking=self.non_blocking)
+            w = m.weight.to(self.q_device, non_blocking=self.non_blocking)
+            bias = m.bias.to(self.q_device, non_blocking=self.non_blocking) if m.bias is not None else None
             qx, qw = do_fake_quant(name, w, x)
             return F.conv2d(qx, qw, bias, m.stride, m.padding, m.dilation, m.groups)
 
         def quant_linear_forward(m, x):
             assert isinstance(m, nn.Linear)
             name = self.layer_names[id(m)]
-            x = x.to(self.q_device)
-            w = m.weight.to(self.q_device)
-            bias = m.bias.to(self.q_device) if m.bias is not None else None
+            x = x.to(self.q_device, non_blocking=self.non_blocking)
+            w = m.weight.to(self.q_device, non_blocking=self.non_blocking)
+            bias = m.bias.to(self.q_device, non_blocking=self.non_blocking) if m.bias is not None else None
             qx, qw = do_fake_quant(name, w, x)
             return F.linear(qx, qw, bias)
+
+        def _check_bn_input_dim(x):
+            if x.dim() <= 2:
+                raise ValueError('expected at least 3D input (got {}D input)'.format(x.dim()))
+
+        @contextmanager
+        def _copy_bn_parameters(m):
+            q_running_mean = m.running_mean.to(self.q_device, non_blocking=self.non_blocking)
+            q_running_var = m.running_var.to(self.q_device, non_blocking=self.non_blocking)
+            if m.affine:
+                weight = m.weight.to(self.q_device, non_blocking=self.non_blocking)
+                bias = m.bias.to(self.q_device, non_blocking=self.non_blocking)
+            else:
+                weight = bias = None
+
+            try:
+                yield q_running_mean, q_running_var, weight, bias
+            finally:
+                m.running_mean.copy_(q_running_mean)
+                m.running_var.copy_(q_running_var)
+
+        def bn_forward(m, x):
+            # from _BatchNorm in torch-1.2
+            _check_bn_input_dim(x)
+
+            # exponential_average_factor is m.momentum set to
+            # (when it is available) only so that if gets updated
+            # in ONNX graph when this node is exported to ONNX.
+            if m.momentum is None:
+                exponential_average_factor = 0.0
+            else:
+                exponential_average_factor = m.momentum
+
+            if m.training and m.track_running_stats:
+                # TODO: if statement only here to tell the jit to skip emitting this when it is None
+                if m.num_batches_tracked is not None:
+                    m.num_batches_tracked += 1
+                    if m.momentum is None:  # use cumulative moving average
+                        exponential_average_factor = 1.0 / float(m.num_batches_tracked)
+                    else:  # use exponential moving average
+                        exponential_average_factor = m.momentum
+
+            with _copy_bn_parameters(m) as (q_mean, q_var, w, b):
+                x_normed = F.batch_norm(
+                    x, q_mean, q_var, w, b,
+                    m.training or not m.track_running_stats,
+                    exponential_average_factor, m.eps)
+            return x_normed
+
+        def sync_bn_forward(m, x):
+            assert isinstance(m, nn.SyncBatchNorm)
+            # from SyncBatchNorm in torch-1.2
+            # currently only GPU input is supported
+            if not x.is_cuda:
+                raise ValueError('expected x tensor to be on GPU')
+
+            if not m.ddp_gpu_size:
+                raise AttributeError('SyncBatchNorm is only supported within torch.nn.parallel.DistributedDataParallel')
+
+            _check_bn_input_dim(x)
+
+            exponential_average_factor = 0.0
+
+            if m.training and m.track_running_stats:
+                m.num_batches_tracked += 1
+                if m.momentum is None:  # use cumulative moving average
+                    exponential_average_factor = 1.0 / m.num_batches_tracked.item()
+                else:  # use exponential moving average
+                    exponential_average_factor = m.momentum
+
+            world_size = 1
+            process_group = torch.distributed.group.WORLD
+            if m.process_group:
+                process_group = m.process_group
+            world_size = torch.distributed.get_world_size(process_group)
+
+            with _copy_bn_parameters(m) as (q_mean, q_var, w, b):
+                # fallback to framework BN when synchronization is not necessary
+                if world_size == 1 or (not m.training and m.track_running_stats):
+                    normed_x = F.batch_norm(
+                        x, q_mean, q_var, w, b,
+                        m.training or not m.track_running_stats,
+                        exponential_average_factor, m.eps)
+                else:
+                    normed_x = sync_batch_norm.apply(
+                        x, w, b, q_mean, q_var,
+                        m.eps, exponential_average_factor, process_group, world_size)
+            return normed_x
 
         def prepare_quant_forward():
             for n, m in self.named_modules():
@@ -192,6 +291,10 @@ class IDQ:
                     m.forward = MethodType(quant_conv2d_forward, m)
                 elif isinstance(m, nn.Linear):
                     m.forward = MethodType(quant_linear_forward, m)
+                elif isinstance(m, nn.BatchNorm2d):
+                    m.forward = MethodType(bn_forward, m)
+                elif isinstance(m, nn.SyncBatchNorm):
+                    m.forward = MethodType(sync_bn_forward, m)
 
         def recover_fp_forward():
             for m in self.modules():
@@ -199,6 +302,10 @@ class IDQ:
                     m.forward = MethodType(nn.Conv2d.forward, m)
                 elif isinstance(m, nn.Linear):
                     m.forward = MethodType(nn.Linear.forward, m)
+                elif isinstance(m, nn.BatchNorm2d):
+                    m.forward = MethodType(nn.BatchNorm2d.forward, m)
+                elif isinstance(m, nn.SyncBatchNorm):
+                    m.forward = MethodType(nn.SyncBatchNorm.forward, m)
 
         def map_input_to_proper_device(*args, is_quant, **kwargs):
             device = self.q_device if is_quant else self.fp_device
@@ -280,6 +387,7 @@ class IDQ:
                 break
             _ = self(img, enable_quant=False, update_quant_param=True)
         self.ddp_forward_hooks.clear()
+        torch.cuda.empty_cache()
 
     @torch.no_grad()
     def update_ddp_quant_param(self, model, calibration_loader, calibration_steps, gamma=0.999, update_bn=False):
@@ -300,6 +408,7 @@ class IDQ:
             else:
                 break
         model_without_ddp.ddp_forward_hooks.clear()
+        torch.cuda.empty_cache()
 
     def get_param_group(self, weight_conf, quant_param_conf, ft_layers=None):
         weight_group = copy(weight_conf)
@@ -327,12 +436,12 @@ class IDQ:
 
         return weight_group, quant_param_group
 
-    def to_proper_device(self, non_blocking=False):
+    def to_proper_device(self):
         if self.fp_device == self.q_device:
-            self.to(self.fp_device, non_blocking=non_blocking)
+            self.to(self.fp_device, non_blocking=self.non_blocking)
         else:
             for n, m in self.named_modules():
                 if "quant_param" in n:
-                    m.to(self.q_device, non_blocking=non_blocking)
+                    m.to(self.q_device, non_blocking=self.non_blocking)
                 else:
-                    m.to(self.fp_device, non_blocking=non_blocking)
+                    m.to(self.fp_device, non_blocking=self.non_blocking)
