@@ -84,7 +84,7 @@ def main():
                             **CONF.data.val_loader_conf)
 
     logger.debug(f"building model `{CONF.arch.type}`...")
-    model = modeling.__dict__[CONF.arch.type](devices=(fp_device, q_device), **CONF.arch.args)
+    model = modeling.__dict__[CONF.arch.type](**CONF.arch.args).to(DEVICE, non_blocking=True)
     if CONF.dist and CONF.arch.sync_bn:
         model = SyncBatchNorm.convert_sync_batchnorm(model)
     logger.debug(f"build model {model.__class__.__name__} done:\n{model}")
@@ -124,7 +124,6 @@ def main():
             model_dict = ckpt["model"] if "model" in ckpt.keys() else ckpt
             try:
                 model_without_ddp.load_state_dict(model_dict, strict=False)
-                model_without_ddp.to_proper_device()
             except RuntimeError as e:
                 logger.warning(e)
             if CONF.resume.load_opt:
@@ -218,7 +217,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             checkpointer.write_to_disk("ckpt_calibrated.pth")
             logger.info(f"calibrated checkpoint has been wrote to disk")
 
-        # img will be mapped to proper device(s) in model.forward
+        img = img.requires_grad_().to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)
         logits = model(img, enable_fp=CONF.quant.enable_fp, enable_quant=scheduler.quant_enabled)
 
@@ -305,6 +304,7 @@ def evaluate(model, loader, enable_fp=True, enable_quant=True, verbose=False, pr
 
     for img, label in loader:
         n = img.size(0)
+        img = img.to(DEVICE, non_blocking=True)
         label = label.to(DEVICE, non_blocking=True)
         logits = model(img, enable_fp=enable_fp, enable_quant=enable_quant)
         (fp_top1, fp_top5), (q_top1, q_top5) = accuracy(logits, label, topk=CONF.loss.topk)
