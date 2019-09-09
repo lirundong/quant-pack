@@ -3,7 +3,7 @@
 import os
 from glob import glob
 from collections import OrderedDict
-from copy import deepcopy
+from copy import copy
 from datetime import timedelta
 
 import torch
@@ -86,9 +86,9 @@ class Checkpointer:
         cpu_dict = OrderedDict()
         for k, v in kwargs.items():
             if torch.is_tensor(v):
-                cpu_dict[k] = deepcopy(v.to(cpu))
+                cpu_dict[k] = v.to(cpu)
             else:
-                cpu_dict[k] = deepcopy(v)
+                cpu_dict[k] = copy(v)
         return cpu_dict
 
     def save(self, **kwargs):
