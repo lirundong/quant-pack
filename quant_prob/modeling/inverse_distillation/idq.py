@@ -12,13 +12,16 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Parameter
+from torch.nn.modules._functions import SyncBatchNorm as sync_batch_norm
 from torch.utils.checkpoint import checkpoint
 
 if torch.cuda.is_available():
     from quant_prob.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant
+
     quantizer = cuda_fake_linear_quant
 else:
     from quant_prob.modeling.quantizers.param_linear_quantizer import fake_linear_quant
+
     quantizer = fake_linear_quant
 
 __all__ = ["IDQ"]
@@ -26,11 +29,12 @@ __all__ = ["IDQ"]
 
 class IDQ:
 
-    def __init__(self, forward_func, kw=4, ka=4, fp_layers=None, align_zero=True, use_ckpt=False):
+    def __init__(self, forward_func, kw=4, ka=4, fp_layers=None, align_zero=True,
+                 use_ckpt=False, use_multi_domain=False):
         assert isinstance(self, nn.Module), f"IDQ should be used in conjunction with `nn.Module`"
 
         if fp_layers is not None and not isinstance(fp_layers, (list, tuple)):
-            fp_layers = (fp_layers, )
+            fp_layers = (fp_layers,)
 
         self.kw = kw
         self.ka = ka
@@ -40,6 +44,7 @@ class IDQ:
         self.activation_quant_param = nn.ParameterDict()
         self.layer_names = dict()
         self.use_ckpt = use_ckpt
+        self.use_multi_domain = use_multi_domain
 
         # Since ordinary hooks do not get invoked when module being wrapped by
         # DDP, we re-initialize them in `forward` at specific iterations.
@@ -52,10 +57,13 @@ class IDQ:
         @wraps(forward_func)
         def _do_forward(obj, x):
             return forward_func(obj, x)
+
         # do not need `MethodType` here, because self has already bind to `_do_forward`
         self.forward = _do_forward
+        self.in_quant_mode = False
 
         self._init_quant_param()
+        self.reinit_multi_domain()
 
     def _init_quant_param(self):
         for n, m in self.named_modules():
@@ -67,6 +75,98 @@ class IDQ:
                 self.weight_quant_param[f"{n}_weight_ub".replace(".", "_")] = ub
                 self.activation_quant_param[f"{n}_act_lb".replace(".", "_")] = Parameter(torch.tensor(0.))
                 self.activation_quant_param[f"{n}_act_ub".replace(".", "_")] = Parameter(torch.tensor(0.))
+
+    def reinit_multi_domain(self):
+        if not self.use_multi_domain:
+            return
+
+        def _get_running_stat(module):
+            if self.use_multi_domain and self.in_quant_mode:
+                running_mean = module.running_mean_q
+                running_var = module.running_var_q
+                num_batches_tracked = module.num_batches_tracked_q
+            else:
+                running_mean = module.running_mean
+                running_var = module.running_var
+                num_batches_tracked = module.num_batches_tracked
+            return running_mean, running_var, num_batches_tracked
+
+        def _check_input_dim(x):
+            if x.dim() <= 2:
+                raise ValueError(f'expected at least 3D input (got {x.dim()}D input)')
+
+        def _multi_domain_bn_forward(module, x):
+            _check_input_dim(x)
+            running_mean, running_var, num_batches_tracked = module.get_running_stat()
+
+            if module.momentum is None:
+                exponential_average_factor = 0.0
+            else:
+                exponential_average_factor = module.momentum
+
+            if module.training and module.track_running_stats:
+                num_batches_tracked.add_(1)
+                if module.momentum is None:  # use cumulative moving average
+                    exponential_average_factor = 1.0 / num_batches_tracked.item()
+                else:  # use exponential moving average
+                    exponential_average_factor = module.momentum
+
+            return F.batch_norm(x, running_mean, running_var, module.weight, module.bias,
+                                module.training or not module.track_running_stats,
+                                exponential_average_factor, module.eps)
+
+        def _multi_domain_sync_bn_forward(module, x):
+            if not x.is_cuda:
+                raise ValueError('expected x tensor to be on GPU')
+
+            if not module.ddp_gpu_size:
+                raise AttributeError('SyncBatchNorm is only supported within torch.nn.parallel.DistributedDataParallel')
+
+            _check_input_dim(x)
+
+            exponential_average_factor = 0.0
+            running_mean, running_var, num_batches_tracked = module.get_running_stat()
+
+            if module.training and module.track_running_stats:
+                num_batches_tracked.add_(1)
+                if module.momentum is None:  # use cumulative moving average
+                    exponential_average_factor = 1.0 / num_batches_tracked.item()
+                else:  # use exponential moving average
+                    exponential_average_factor = module.momentum
+
+            world_size = 1
+            process_group = torch.distributed.group.WORLD
+            if module.process_group:
+                process_group = module.process_group
+            world_size = torch.distributed.get_world_size(process_group)
+
+            # fallback to framework BN when synchronization is not necessary
+            if world_size == 1 or (not module.training and module.track_running_stats):
+                return F.batch_norm(x, running_mean, running_var, module.weight, module.bias,
+                                    module.training or not module.track_running_stats,
+                                    exponential_average_factor, module.eps)
+            else:
+                return sync_batch_norm.apply(
+                    x, module.weight, module.bias, running_mean, running_var,
+                    module.eps, exponential_average_factor, process_group, world_size)
+
+        for m in self.modules():
+            if isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
+                assert m._version == 2, f"deprecated batchnorm implementation, " \
+                                        f"please switch to pytorch>=1.1"
+                device = next(m.buffers()).device
+                if not hasattr(m, "running_mean_q"):
+                    m.register_buffer("running_mean_q", torch.zeros(m.num_features, device=device))
+                if not hasattr(m, "running_var"):
+                    m.register_buffer("running_var_q", torch.ones(m.num_features, device=device))
+                if not hasattr(m, "num_batches_tracked_q"):
+                    m.register_buffer("num_batches_tracked_q", torch.tensor(0, dtype=torch.long, device=device))
+
+                m.get_running_stat = MethodType(_get_running_stat, m)
+                if isinstance(m, nn.BatchNorm2d):
+                    m.forward = MethodType(_multi_domain_bn_forward, m)
+                elif isinstance(m, nn.SyncBatchNorm):
+                    m.forward = MethodType(_multi_domain_sync_bn_forward, m)
 
     def _update_stat(self, input, name, percentile, param_bank):
         assert torch.is_tensor(input)
@@ -135,8 +235,9 @@ class IDQ:
                 mean = input_view.mean()
                 var = input_view.var()
 
-            module.running_mean.copy_(mean)
-            module.running_var.copy_(var)
+            running_mean, running_var, _ = module.get_running_stat()
+            running_mean.copy_(mean)
+            running_var.copy_(var)
 
         assert len(self.ddp_forward_hooks) == 0
         self.ddp_forward_hooks.append(update_act_stat_hook)
@@ -168,6 +269,7 @@ class IDQ:
 
         @contextmanager
         def quant_forward():
+            self.in_quant_mode = True
             for n, m in self.named_modules():
                 if self.fp_layers is not None and any(fp_n in n for fp_n in self.fp_layers):
                     continue
@@ -178,6 +280,7 @@ class IDQ:
             try:
                 yield
             finally:
+                self.in_quant_mode = False
                 for m in self.modules():
                     if isinstance(m, nn.Conv2d):
                         m.forward = MethodType(nn.Conv2d.forward, m)
@@ -218,7 +321,7 @@ class IDQ:
 
                 if enable_fp:
                     if self.use_ckpt and self.training and not update_quant_param:
-                        logits_fp = checkpoint(lambda *x: func(self, *x), *args, preserve_rng_state=False)
+                        logits_fp = checkpoint(lambda *x: func(self, *x), *args)
                     else:
                         logits_fp = func(self, *args, **kwargs)
                 else:
@@ -227,7 +330,7 @@ class IDQ:
                 if enable_quant:
                     with quant_forward():
                         if self.use_ckpt and self.training and not update_bn:
-                            logits_q = checkpoint(lambda *x: func(self, *x), *args, preserve_rng_state=False)
+                            logits_q = checkpoint(lambda *x: func(self, *x), *args)
                         else:
                             logits_q = func(self, *args, **kwargs)
                 else:
@@ -266,10 +369,12 @@ class IDQ:
         for step, (img, label) in enumerate(calibration_loader):
             if step < calibration_steps:
                 _ = model(img, enable_quant=False, update_quant_param=True)
-                logger.debug(f"[calib step {step:2d}]: max GRAM: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB")
+                logger.debug(
+                    f"[calib step {step:2d}]: max GRAM: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB")
             elif update_bn and step < calibration_steps * 2:
                 _ = model(img, enable_fp=False, update_bn=True)
-                logger.debug(f"[update BN step {step:2d}]: max GRAM: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB")
+                logger.debug(
+                    f"[update BN step {step:2d}]: max GRAM: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB")
             else:
                 break
         model_without_ddp.ddp_forward_hooks.clear()
@@ -283,7 +388,7 @@ class IDQ:
         for n, p in self.named_parameters():
             if ft_layers is not None:
                 if not isinstance(ft_layers, (list, tuple)):
-                    ft_layers = (ft_layers, )
+                    ft_layers = (ft_layers,)
 
                 logger = getLogger("global")
                 if any(l in n for l in ft_layers) and "quant_param" not in n:

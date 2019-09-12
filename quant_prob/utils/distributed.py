@@ -15,7 +15,7 @@ __all__ = ["get_devices", "get_ddp_model", "dist_init"]
 
 def _get_master_ip_slurm():
     node_list = os.environ["SLURM_JOB_NODELIST"]
-    tokens = [token for token in re.split(r"[-,\[]", node_list) if token.isdigit()]
+    tokens = [token for token in re.split(r"[-,\[\]]", node_list) if token.isdigit()]
     master_ip = ".".join(tokens[:4])
     return master_ip
 
