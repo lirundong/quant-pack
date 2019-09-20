@@ -4,154 +4,19 @@
 #include <ATen/ATen.h>
 #include <ATen/TensorUtils.h>
 #include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAGuard.h>
 #include <ATen/cuda/CUDAApplyUtils.cuh>
+#include <c10/cuda/CUDAGuard.h>
 
-#include "quant_cuda.h"
-#include "cuda_helpers.h"
-
-// outlier idx in uint8_t range
-#define OUTLIER_UPPER 0x01
-#define OUTLIER_LOWER 0x02
-
-template <typename T>
-__global__ void linear_quant_align_zero_forward_kernel(
-  const int nthreads,
-  const T *x_t,
-  const T delta,
-  const T zero_point,
-  const T lb,
-  const T lb_nudged,
-  const T ub_nudged,
-  T *qx_t,
-  T *di_t,
-  uint8_t *maskx_t) {
-  CUDA_1D_KERNEL_LOOP(idx, nthreads) {
-    const T x = x_t[idx];
-    T x_clamped = CLAMP(x, lb_nudged, ub_nudged);
-    T i = round((x_clamped - lb_nudged) / delta);
-
-    qx_t[idx] = delta * (i - zero_point);
-    di_t[idx] = (i - zero_point) - ((x_clamped - lb_nudged - abs(lb)) / delta);
-    maskx_t[idx] = static_cast<uint8_t>(lb_nudged <= x && x <= ub_nudged);
-  }
-}
-
-template <typename T>
-__global__ void linear_quant_align_zero_backward_kernel(
-  const int nthreads,
-  const T *dy_t,
-  const T *di_t,
-  const uint8_t *maskx_t,
-  const T n,
-  const T sign_lb,
-  T *dx_t,
-  T *dlb_t,
-  T *dub_t) {
-  CUDA_1D_KERNEL_LOOP(idx, nthreads) {
-    T dy = dy_t[idx], di = di_t[idx];
-    T ddelta = dy * di;
-    T dub = ddelta / n;
-    T dlb = - dub - dy * sign_lb;
-
-    dx_t[idx] = dy * static_cast<T>(maskx_t[idx]);
-    dlb_t[idx] = dlb;
-    dub_t[idx] = dub;
-  }
-}
-
-template <typename T>
-__global__ void linear_quant_no_align_zero_forward_kernel(
-  const int nthreads,
-  const T *x_t,
-  const T delta,
-  const T lb,
-  const T ub,
-  const T n,
-  T *qx_t,
-  T *diff_i_t,
-  uint8_t *maskx_t) {
-  CUDA_1D_KERNEL_LOOP(idx, nthreads) {
-    const T x = x_t[idx];
-    T x_clamped = CLAMP(x, lb, ub);
-    T i_real = (x_clamped - lb) / delta;
-    T i_round = round(i_real);
-    T qx = i_round * delta + lb;
-    T i_diff = i_round - i_real;
-    i_diff /= n;
-
-    qx_t[idx] = qx;
-    diff_i_t[idx] = i_diff;
-    // TODO: check if this branch hurt performance
-    if (ub < x) {
-      maskx_t[idx] |= OUTLIER_UPPER;
-    } else if (x < lb) {
-      maskx_t[idx] |= OUTLIER_LOWER;
-    }
-  }
-}
-
-template <typename T>
-__global__ void linear_quant_no_align_zero_backward_kernel(
-  const int nthreads,
-  const T *dy_t,
-  const T *diff_i_t,
-  const uint8_t *maskx_t,
-  T *dx_t,
-  T *dlb_t,
-  T *dub_t) {
-  CUDA_1D_KERNEL_LOOP(idx, nthreads) {
-    const uint8_t maskx = maskx_t[idx];
-    const T dy = dy_t[idx], diff_i = diff_i_t[idx];
-    T not_outlier = !((maskx & OUTLIER_LOWER) || (maskx & OUTLIER_UPPER));
-    T d_diff = dy * diff_i;
-
-    dx_t[idx] = dy * not_outlier;
-    dlb_t[idx] = dy * static_cast<T>(maskx & OUTLIER_LOWER) - d_diff;
-    dub_t[idx] = dy * static_cast<T>(maskx & OUTLIER_UPPER) + d_diff;
-  }
-}
-
-template <typename T>
-__global__ void binary_forward_kernel(
-  const int nthreads,
-  const T *x_t,
-  const T lb,
-  const T ub,
-  T *qx_t,
-  uint8_t *maskx_t) {
-  CUDA_1D_KERNEL_LOOP(idx, nthreads) {
-    T x = x_t[idx];
-
-    qx_t[idx] = x > 0. ? ub : lb;
-    maskx_t[idx] |= x > 0. ? OUTLIER_UPPER : OUTLIER_LOWER;
-  }
-}
-
-template <typename T>
-__global__ void binary_backward_kernel(
-  const int nthreads,
-  const T *dy_t,
-  const uint8_t *maskx_t,
-  T *dx_t,
-  T *dlb_t,
-  T *dub_t) {
-  CUDA_1D_KERNEL_LOOP(idx, nthreads) {
-    T dy = dy_t[idx];
-    uint8_t maskx = maskx_t[idx];
-
-    dx_t[idx] = dy;
-    dlb_t[idx] = dy * static_cast<T>(maskx & OUTLIER_LOWER);
-    dub_t[idx] = dy * static_cast<T>(maskx & OUTLIER_UPPER);
-  }
-}
+#include "quant_cuda.hpp"
+#include "quant_kernels.cuh"
 
 std::array<at::Tensor, 3> linear_quant_forward_cuda(
   const at::Tensor &x_t,
   const at::Tensor &lb_t,
   const at::Tensor &ub_t,
   const int bit_width,
-  const bool align_zero) {
+  const bool align_zero,
+  const bool channel_quant) {
   AT_ASSERTM(x_t.device().is_cuda(),
              "input tensor must resides in CUDA");
   AT_ASSERTM(lb_t.device().is_cuda(),
@@ -165,10 +30,20 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
   at::CheckedFrom f{"linear_quant_forward"};
   at::checkAllSameGPU(f, {x_t_, lb_t_, ub_t_});
   at::checkAllSameType(f, {x_t_, lb_t_, ub_t_});
+  at::checkSameDim(f, lb_t_, ub_t_);
 
   at::cuda::CUDAGuard device_guard(x_t.device());
 
-  const int output_size = x_t.numel();
+  int output_size = x_t.numel(),
+      num_channels = -1,
+      spatial_size = -1;
+  if (channel_quant) {
+    AT_ASSERTM(x_t.dim() == 4,
+               "channel-wise quant only works on 4dim-NCHW activations");
+    num_channels = x_t.size(1);
+    spatial_size = x_t.size(2) * x_t.size(3);
+  }
+
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
   dim3 grid(std::min(at::cuda::ATenCeilDiv(output_size, THREADS_PER_BLOCK),
                      MAX_GRIDS_NUM));
@@ -227,27 +102,48 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
     );
 
   } else {
-    double lb = lb_t.item<double>(), ub = ub_t.item<double>();
     double n = std::pow(2., bit_width) - 1.;
-    double delta = (ub - lb) / n;
+    if (channel_quant) {
+      AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        x_t.scalar_type(),
+        "linear_channel_quant_no_align_zero_forward",
+        [&] () -> void {
+          linear_channel_quant_no_align_zero_forward_kernel<scalar_t>
+            <<<grid, block, 0, stream>>>(
+              /*nthreads=*/output_size,
+              /*num_channels=*/num_channels,
+              /*spatial_size=*/spatial_size,
+              /*x_t=*/x_t.data<scalar_t>(),
+              /*lb_t=*/lb_t.data<scalar_t>(),
+              /*ub_t=*/ub_t.data<scalar_t>(),
+              /*quant_levels=*/static_cast<scalar_t>(n),
+              /*qx_t=*/qx_t.data<scalar_t>(),
+              /*diff_i_t=*/di_t.data<scalar_t>(),
+              /*maskx_t=*/maskx_t.data<uint8_t>());
+        }
+      );
 
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-      x_t.scalar_type(),
-      "linear_quant_no_align_zero_forward",
-      [&] () -> void {
-        linear_quant_no_align_zero_forward_kernel<scalar_t>
-          <<<grid, block, 0, stream>>>(
-            /*nthreads=*/output_size,
-            /*x_t=*/x_t.data<scalar_t>(),
-            /*delta=*/static_cast<scalar_t>(delta),
-            /*lb=*/static_cast<scalar_t>(lb),
-            /*ub=*/static_cast<scalar_t>(ub),
-            /*n=*/static_cast<scalar_t>(n),
-            /*qx_t=*/qx_t.data<scalar_t>(),
-            /*diff_i_t=*/di_t.data<scalar_t>(),
-            /*maskx_t=*/maskx_t.data<uint8_t>());
-      }
-    );
+    } else {
+      double lb = lb_t.item<double>(), ub = ub_t.item<double>();
+      double delta = (ub - lb) / n;
+      AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        x_t.scalar_type(),
+        "linear_quant_no_align_zero_forward",
+        [&] () -> void {
+          linear_quant_no_align_zero_forward_kernel<scalar_t>
+            <<<grid, block, 0, stream>>>(
+              /*nthreads=*/output_size,
+              /*x_t=*/x_t.data<scalar_t>(),
+              /*delta=*/static_cast<scalar_t>(delta),
+              /*lb=*/static_cast<scalar_t>(lb),
+              /*ub=*/static_cast<scalar_t>(ub),
+              /*n=*/static_cast<scalar_t>(n),
+              /*qx_t=*/qx_t.data<scalar_t>(),
+              /*diff_i_t=*/di_t.data<scalar_t>(),
+              /*maskx_t=*/maskx_t.data<uint8_t>());
+        }
+      );
+    }
   }
 
   AT_CUDA_CHECK(cudaGetLastError());
@@ -258,9 +154,10 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
   const at::Tensor &dy_t,
   const at::Tensor &di_t,
   const at::Tensor &maskx_t,
+  const at::Tensor &sign_lb_t,
   const int bit_width,
-  const float sign_lb,
-  const bool align_zero) {
+  const bool align_zero,
+  const bool channel_quant) {
   AT_ASSERTM(dy_t.device().is_cuda(),
              "output grad tensor must resides in CUDA");
   AT_ASSERTM(di_t.device().is_cuda(),
@@ -314,7 +211,7 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
             /*di_t=*/di_t.data<scalar_t>(),
             /*maskx_t=*/maskx_t.data<uint8_t>(),
             /*n=*/static_cast<scalar_t>(std::pow(2., bit_width) - 1.),
-            /*sign_lb=*/static_cast<scalar_t>(sign_lb),
+            /*sign_lb=*/sign_lb_t.item<scalar_t>(),
             /*dx_t=*/dx_t.data<scalar_t>(),
             /*dlb_t=*/dlb_buffer.data<scalar_t>(),
             /*dub_t=*/dub_buffer.data<scalar_t>());
@@ -339,8 +236,14 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
     );
   }
 
-  auto dlb = dlb_buffer.sum();
-  auto dub = dub_buffer.sum();
+  at::Tensor dlb, dub;
+  if (channel_quant) {
+    dlb = dlb_buffer.sum({0, 2, 3});
+    dub = dub_buffer.sum({0, 2, 3});
+  } else {
+    dlb = dlb_buffer.sum();
+    dub = dub_buffer.sum();
+  }
 
   AT_CUDA_CHECK(cudaGetLastError());
   return {dx_t, dlb, dub};

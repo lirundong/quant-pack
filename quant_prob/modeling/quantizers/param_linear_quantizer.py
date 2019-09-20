@@ -44,6 +44,18 @@ class BinaryQuant(Function):
 
 
 def clamp(x: Tensor, lb: Tensor, ub: Tensor) -> Tensor:
+
+    def _make_broadcast(t):
+        if t.dim() == 0 or t.dim() == 4:
+            return t
+        else:
+            assert x.dim() == 4, "only perform channel-wise quant to activations"
+            assert t.dim() == 1 and t.size(0) == x.size(1)
+            c = t.size(0)
+            return t.reshape(1, c, 1, 1)
+
+    lb = _make_broadcast(lb)
+    ub = _make_broadcast(ub)
     x = torch.min(x, ub)
     x = torch.max(lb, x)
     return x
