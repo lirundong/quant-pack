@@ -157,7 +157,7 @@ class IDQ:
                 device = next(m.buffers()).device
                 if not hasattr(m, "running_mean_q"):
                     m.register_buffer("running_mean_q", torch.zeros(m.num_features, device=device))
-                if not hasattr(m, "running_var"):
+                if not hasattr(m, "running_var_q"):
                     m.register_buffer("running_var_q", torch.ones(m.num_features, device=device))
                 if not hasattr(m, "num_batches_tracked_q"):
                     m.register_buffer("num_batches_tracked_q", torch.tensor(0, dtype=torch.long, device=device))

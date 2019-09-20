@@ -152,11 +152,15 @@ def main():
 
     if CONF.debug:
         num_params = 0
+        numel_params = 0
         opt_conf = []
         for p in opt.get_param_groups():
             num_params += len(p["params"])
+            for param in p["params"]:
+                numel_params += param.numel()
             opt_conf.append({k: v for k, v in p.items() if k != "params"})
-        logger.debug(f"number of parameters: {num_params}")
+        logger.debug(f"number of parameter tensors: {num_params}")
+        logger.debug(f"total numel of parameters: {numel_params / 1024 / 1024:.2f}M")
         logger.debug(f"optimizer conf:\n{pformat(opt_conf)}")
 
     if CONF.diagnose.enabled:
