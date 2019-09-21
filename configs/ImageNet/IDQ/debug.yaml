@@ -46,12 +46,13 @@ quant:
 
 ## Models
 arch:
-  type: mobilenet_v2_idq
+  type: resnet18_idq
   args:
     kw: *qw
     ka: *qa
     fp_layers: *fp_layers
     align_zero: *qz
+    use_channel_quant: true
     use_ckpt: false
     use_multi_domain: true
   sync_bn: true
