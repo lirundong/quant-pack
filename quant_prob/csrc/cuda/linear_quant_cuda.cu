@@ -238,8 +238,8 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
 
   at::Tensor dlb, dub;
   if (channel_quant) {
-    dlb = dlb_buffer.sum({0, 2, 3});
-    dub = dub_buffer.sum({0, 2, 3});
+    dlb = dlb_buffer.sum(/*dim=*/{0, 2, 3});
+    dub = dub_buffer.sum(/*dim=*/{0, 2, 3});
   } else {
     dlb = dlb_buffer.sum();
     dub = dub_buffer.sum();

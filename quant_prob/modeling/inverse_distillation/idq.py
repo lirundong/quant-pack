@@ -16,20 +16,16 @@ from torch.nn.modules._functions import SyncBatchNorm as sync_batch_norm
 from torch.utils.checkpoint import checkpoint
 
 if torch.cuda.is_available():
-    from quant_prob.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant
-
-    quantizer = cuda_fake_linear_quant
+    from quant_prob.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant as quantizer
 else:
-    from quant_prob.modeling.quantizers.param_linear_quantizer import fake_linear_quant
-
-    quantizer = fake_linear_quant
+    from quant_prob.modeling.quantizers.param_linear_quantizer import fake_linear_quant as quantizer
 
 __all__ = ["IDQ"]
 
 
 class IDQ:
 
-    def __init__(self, forward_func, kw=4, ka=4, fp_layers=None, align_zero=True,
+    def __init__(self, forward_func, kw=4, ka=4, fp_layers=None, align_zero=True, use_channel_quant=False,
                  use_ckpt=False, use_multi_domain=False):
         assert isinstance(self, nn.Module), f"IDQ should be used in conjunction with `nn.Module`"
 
@@ -43,6 +39,7 @@ class IDQ:
         self.weight_quant_param = nn.ParameterDict()
         self.activation_quant_param = nn.ParameterDict()
         self.layer_names = dict()
+        self.use_channel_quant = use_channel_quant
         self.use_ckpt = use_ckpt
         self.use_multi_domain = use_multi_domain
 
@@ -66,11 +63,23 @@ class IDQ:
         self.reinit_multi_domain()
 
     def _init_quant_param(self):
+
+        def _param_range(p):
+            p = p.detach()
+            if self.use_channel_quant:
+                c_out = p.size(0)
+                p_view = p.reshape(c_out, -1)
+                p_min, _ = p_view.min(dim=1)
+                p_max, _ = p_view.max(dim=1)
+            else:
+                p_min = p.min()
+                p_max = p.max()
+            return Parameter(p_min), Parameter(p_max)
+
         for n, m in self.named_modules():
             if isinstance(m, (nn.Conv2d, nn.Linear)):
                 self.layer_names[id(m)] = n
-                lb = Parameter(m.weight.detach().min())
-                ub = Parameter(m.weight.detach().max())
+                lb, ub = _param_range(m.weight)
                 self.weight_quant_param[f"{n}_weight_lb".replace(".", "_")] = lb
                 self.weight_quant_param[f"{n}_weight_ub".replace(".", "_")] = ub
                 self.activation_quant_param[f"{n}_act_lb".replace(".", "_")] = Parameter(torch.tensor(0.))
