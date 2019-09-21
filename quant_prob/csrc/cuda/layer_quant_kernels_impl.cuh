@@ -45,7 +45,7 @@ __global__ void linear_quant_align_zero_backward_kernel(
 }
 
 template <typename T>
-__global__ void linear_quant_no_align_zero_forward_kernel(
+__global__ void linear_quant_forward_kernel(
   const int nthreads,
   const T *x_t,
   const T delta,
@@ -76,7 +76,7 @@ __global__ void linear_quant_no_align_zero_forward_kernel(
 }
 
 template <typename T>
-__global__ void linear_quant_no_align_zero_backward_kernel(
+__global__ void linear_quant_backward_kernel(
   const int nthreads,
   const T *dy_t,
   const T *diff_i_t,

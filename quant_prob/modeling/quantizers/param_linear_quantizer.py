@@ -46,13 +46,13 @@ class BinaryQuant(Function):
 def clamp(x: Tensor, lb: Tensor, ub: Tensor) -> Tensor:
 
     def _make_broadcast(t):
-        if t.dim() == 0 or t.dim() == 4:
+        if t.dim() == 0 or t.dim() == x.dim():
             return t
         else:
-            assert x.dim() == 4, "only perform channel-wise quant to activations"
-            assert t.dim() == 1 and t.size(0) == x.size(1)
+            assert t.dim() == 1
             c = t.size(0)
-            return t.reshape(1, c, 1, 1)
+            dim = x.dim() - 1
+            return t.reshape((c, ) + (1, ) * dim)
 
     lb = _make_broadcast(lb)
     ub = _make_broadcast(ub)

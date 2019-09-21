@@ -9,7 +9,17 @@ from quant_prob.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake
 SEED = 19260817
 DEVICE = torch.device("cuda:0")
 DTYPE = torch.float64
+
 torch.manual_seed(SEED)
+
+
+def _make_broadcast(t, x):
+    if t.dim() == 0:
+        return t
+    else:
+        c = t.size(0)
+        dim = x.dim() - 1
+        return t.reshape((c, ) + (1, ) * dim)
 
 
 def test_bound_grad():
@@ -160,31 +170,18 @@ def test_quant_num_grad_no_align_zero():
     assert torch.allclose(d_x_cuda, d_x_gt)
 
 
-def test_channel_quant_num_grad():
+def test_channel_quant_4d_param_grad():
     from quant_prob.modeling.quantizers.param_linear_quantizer import RoundSTE
 
-    def _make_broadcast(t):
-        if t.dim() == 0:
-            return t
-        else:
-            c = t.size(0)
-            return t.reshape(1, c, 1, 1)
-
-    def _channel_sum(x):
-        assert x.dim() == 4
-        c = x.size(1)
-        x = x.permute(1, 0, 2, 3).reshape(c, -1).sum(dim=1)
-        return x
-
-    x = torch.randn(1, 3, 224, 224, requires_grad=True, dtype=DTYPE, device=DEVICE)
-    xc = x.detach().permute(1, 0, 2, 3).reshape(3, -1)
+    x = torch.randn(32, 16, 5, 5, requires_grad=True, dtype=DTYPE, device=DEVICE)
+    xc = x.detach().reshape(32, -1)
     xc_lb, _ = xc.min(dim=1)
     xc_ub, _ = xc.max(dim=1)
     d_qx = torch.randn_like(x).detach()
     lbp = Parameter(xc_lb + 0.1)
     ubp = Parameter(xc_ub - 0.1)
-    lb = _make_broadcast(lbp)
-    ub = _make_broadcast(ubp)
+    lb = _make_broadcast(lbp, x)
+    ub = _make_broadcast(ubp, x)
     k = 8
     round_ = RoundSTE.apply
 
@@ -200,8 +197,64 @@ def test_channel_quant_num_grad():
         mask_up = (x > ub).to(x.dtype)
         mask_down = (x < lb).to(x.dtype)
         # NOTE: the diff_i matters!
-        d_ub = _channel_sum((d_qx * mask_up) + (d_qx * qi_diff / n))
-        d_lb = _channel_sum((d_qx * mask_down) - (d_qx * qi_diff / n))
+        d_ub = ((d_qx * mask_up) + (d_qx * qi_diff / n)).sum(dim=(1, 2, 3))
+        d_lb = ((d_qx * mask_down) - (d_qx * qi_diff / n)).sum(dim=(1, 2, 3))
+    qx.backward(d_qx)
+
+    d_lb_gt = lbp.grad.detach()
+    d_ub_gt = ubp.grad.detach()
+    d_x_gt = x.grad.detach()
+
+    assert torch.allclose(d_qx * x_mask.to(d_qx.dtype), d_x_gt)
+    assert torch.allclose(d_ub, d_ub_gt)
+    assert torch.allclose(d_lb, d_lb_gt)
+
+    # CUDA numerical implementation
+    lbp.grad.detach_().zero_()
+    ubp.grad.detach_().zero_()
+    x.grad.detach_().zero_()
+
+    qx = cuda_fake_linear_quant(x, lbp, ubp, k, align_zero=False)
+    qx.backward(d_qx)
+
+    d_lb_cuda = lbp.grad.detach()
+    d_ub_cuda = ubp.grad.detach()
+    d_x_cuda = x.grad.detach()
+
+    assert torch.allclose(d_lb_cuda, d_lb_gt)
+    assert torch.allclose(d_ub_cuda, d_ub_gt)
+    assert torch.allclose(d_x_cuda, d_x_gt)
+
+
+def test_channel_quant_2d_param_grad():
+    from quant_prob.modeling.quantizers.param_linear_quantizer import RoundSTE
+
+    x = torch.randn(32, 16, requires_grad=True, dtype=DTYPE, device=DEVICE)
+    xc = x.detach()
+    xc_lb, _ = xc.min(dim=1)
+    xc_ub, _ = xc.max(dim=1)
+    d_qx = torch.randn_like(x).detach()
+    lbp = Parameter(xc_lb + 0.1)
+    ubp = Parameter(xc_ub - 0.1)
+    lb = _make_broadcast(lbp, x)
+    ub = _make_broadcast(ubp, x)
+    k = 8
+    round_ = RoundSTE.apply
+
+    # autograd implementation
+    assert (xc_ub - xc_lb).abs().max().item() > 1e-2
+    n = 2 ** k - 1
+    delta = (ub - lb) / n
+    x_clamped = clamp(x, lb, ub)
+    qx = round_((x_clamped - lb) / delta) * delta + lb
+    with torch.no_grad():
+        qi_diff = round_((x_clamped - lb) / delta) - ((x_clamped - lb) / delta)
+        x_mask = (lb <= x) & (x <= ub)  # pre-compute mask
+        mask_up = (x > ub).to(x.dtype)
+        mask_down = (x < lb).to(x.dtype)
+        # NOTE: the diff_i matters!
+        d_ub = ((d_qx * mask_up) + (d_qx * qi_diff / n)).sum(dim=1)
+        d_lb = ((d_qx * mask_down) - (d_qx * qi_diff / n)).sum(dim=1)
     qx.backward(d_qx)
 
     d_lb_gt = lbp.grad.detach()

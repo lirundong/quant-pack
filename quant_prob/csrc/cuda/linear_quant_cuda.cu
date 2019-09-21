@@ -17,17 +17,10 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
   const int bit_width,
   const bool align_zero,
   const bool channel_quant) {
-  AT_ASSERTM(x_t.device().is_cuda(),
-             "input tensor must resides in CUDA");
-  AT_ASSERTM(lb_t.device().is_cuda(),
-             "boundary tensor must resides in CUDA");
-  AT_ASSERTM(ub_t.device().is_cuda(),
-             "boundary tensor must resides in CUDA");
-
   at::TensorArg x_t_{x_t, "x_t", 1},
                 lb_t_{lb_t, "lb_t", 2},
                 ub_t_{ub_t, "ub_t", 3};
-  at::CheckedFrom f{"linear_quant_forward"};
+  at::CheckedFrom f{"linear_quant_forward_cuda"};
   at::checkAllSameGPU(f, {x_t_, lb_t_, ub_t_});
   at::checkAllSameType(f, {x_t_, lb_t_, ub_t_});
   at::checkSameDim(f, lb_t_, ub_t_);
@@ -35,13 +28,14 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
   at::cuda::CUDAGuard device_guard(x_t.device());
 
   int output_size = x_t.numel(),
-      num_channels = -1,
+      num_channels = x_t.size(0),
       spatial_size = -1;
-  if (channel_quant) {
-    AT_ASSERTM(x_t.dim() == 4,
-               "channel-wise quant only works on 4dim-NCHW activations");
-    num_channels = x_t.size(1);
-    spatial_size = x_t.size(2) * x_t.size(3);
+  if (channel_quant && x_t.dim() == 4) {
+    // 4D params: c_out, c_in, k_h, k_w
+    spatial_size = x_t.size(1) * x_t.size(2) * x_t.size(3);
+  } else if (channel_quant && x_t.dim() == 2) {
+    // 2D params: c_out, c_in
+    spatial_size = x_t.size(1);
   }
 
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
@@ -106,9 +100,9 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
     if (channel_quant) {
       AT_DISPATCH_FLOATING_TYPES_AND_HALF(
         x_t.scalar_type(),
-        "linear_channel_quant_no_align_zero_forward",
+        "linear_channel_quant_forward",
         [&] () -> void {
-          linear_channel_quant_no_align_zero_forward_kernel<scalar_t>
+          linear_channel_quant_forward_kernel<scalar_t>
             <<<grid, block, 0, stream>>>(
               /*nthreads=*/output_size,
               /*num_channels=*/num_channels,
@@ -128,9 +122,9 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
       double delta = (ub - lb) / n;
       AT_DISPATCH_FLOATING_TYPES_AND_HALF(
         x_t.scalar_type(),
-        "linear_quant_no_align_zero_forward",
+        "linear_quant_forward",
         [&] () -> void {
-          linear_quant_no_align_zero_forward_kernel<scalar_t>
+          linear_quant_forward_kernel<scalar_t>
             <<<grid, block, 0, stream>>>(
               /*nthreads=*/output_size,
               /*x_t=*/x_t.data<scalar_t>(),
@@ -158,13 +152,6 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
   const int bit_width,
   const bool align_zero,
   const bool channel_quant) {
-  AT_ASSERTM(dy_t.device().is_cuda(),
-             "output grad tensor must resides in CUDA");
-  AT_ASSERTM(di_t.device().is_cuda(),
-             "index grad tensor must resides in CUDA");
-  AT_ASSERTM(maskx_t.device().is_cuda(),
-             "mask tensor must resides in CUDA");
-
   at::TensorArg dy_t_{dy_t, "dy_t", 1},
                 di_t_{di_t, "di_t", 2},
                 maskx_t_{maskx_t, "maskx_t", 3};
@@ -221,9 +208,9 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
   } else {
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(
       dy_t.scalar_type(),
-      "linear_quant_no_align_zero_backward",
+      "linear_quant_backward",
       [&] () -> void {
-        linear_quant_no_align_zero_backward_kernel<scalar_t>
+        linear_quant_backward_kernel<scalar_t>
           <<<grid, block, 0, stream>>>(
             /*nthreads=*/output_size,
             /*dy_t=*/dy_t.data<scalar_t>(),
@@ -237,9 +224,12 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
   }
 
   at::Tensor dlb, dub;
-  if (channel_quant) {
-    dlb = dlb_buffer.sum(/*dim=*/{0, 2, 3});
-    dub = dub_buffer.sum(/*dim=*/{0, 2, 3});
+  if (channel_quant && dx_t.dim() == 4) {
+    dlb = dlb_buffer.sum(/*dim=*/{1, 2, 3});
+    dub = dub_buffer.sum(/*dim=*/{1, 2, 3});
+  } else if (channel_quant && dx_t.dim() == 2) {
+    dlb = dlb_buffer.sum(/*dim=*/{1});
+    dub = dub_buffer.sum(/*dim=*/{1});
   } else {
     dlb = dlb_buffer.sum();
     dub = dub_buffer.sum();

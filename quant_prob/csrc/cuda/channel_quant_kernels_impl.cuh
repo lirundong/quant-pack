@@ -1,7 +1,7 @@
 // Note: all following kernels assume that x_t is in NCHW format
 
 template <typename T>
-__global__ void linear_channel_quant_no_align_zero_forward_kernel(
+__global__ void linear_channel_quant_forward_kernel(
   const int numel,
   const int num_channels,
   const int spatial_size,
