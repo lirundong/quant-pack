@@ -27,7 +27,7 @@ data:
 ## Strategy
 distil:
   mode: inv_distil # {null, inv_distil, distil}
-  alter_step: &alter_n 1
+  alter_step: &alter_n -1  # only for weights
   zero_momentum: false
 
 quant:

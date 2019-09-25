@@ -10,6 +10,7 @@ data:
       img_dir: /mnt/lustre/share/images/
       meta_dir: /mnt/lustre/share/images/meta/
       color: true
+      use_mc: true
   train_loader_conf:
     batch_size: *bs
     shuffle: false
@@ -39,7 +40,7 @@ quant:
     gamma: !!float 0.999
     required_on_training: true
     update_bn: false
-  enable_at: &enable_q 0
+  enable_at: &enable_q 60
   enable_fp: true
   align_zero: &qz false  # TODO: correct gradients for align_zero=True
   fp_layers: &fp_layers
@@ -54,6 +55,9 @@ arch:
     ka: *qa
     fp_layers: *fp_layers
     align_zero: *qz
+    use_channel_quant: true
+    use_ckpt: false
+    use_multi_domain: true
   sync_bn: true
   gpu_per_model: 1
 
@@ -72,7 +76,7 @@ loss:
   args:
     soft_weight: null
     temperature: 1.0
-    detach_ref: false
+    detach_ref: true
   topk: [1, 5]
 
 ## Optimization
@@ -107,15 +111,17 @@ schedule:
     warmup_lr: 0.025
     enable_quant_at: *enable_q
     scheduled_variables:
-      # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch
+      # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch, terminate_epoch=-1
       # warmup_{...}_epoch is the index of `schedule.milestones`, setup to null means do not tune it
+      # multiple schedule for one variable is acceptable, which will thus be segmented by `terminate_epoch`s
       - ["soft_w", 0.5, 0.5, null, null, -1]
       - ["hard_w", 0.5, 0.5, null, null, -1]
+      - ["ref_w", 1.0, 1.0, null, null, -1]
 
 ## Resume and snapshot
 ckpt:
   freq: 1000
-  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_nqa/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_nqac_detach_kl_multi_domain/checkpoints/
 
 resume:
   path: null
@@ -124,9 +130,9 @@ resume:
 
 ## Diagnose
 log:
-  freq: 25
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_nqa/tb_logs/
-  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_nqa/train
+  freq: 100
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_nqac_detach_kl_multi_domain/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/idq_e120_b64x32_nqac_detach_kl_multi_domain/train
 
 diagnose:
   enabled: false
@@ -136,5 +142,5 @@ diagnose:
   tasks: []
 
 ## Misc
-comment: "idq_e120_b64x32_nqa"
+comment: "idq_e120_b64x32_nqac_detach_kl_multi_domain"
 progress_bar: false

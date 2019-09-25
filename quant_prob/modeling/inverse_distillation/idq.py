@@ -388,6 +388,33 @@ class IDQ:
                 break
         model_without_ddp.ddp_forward_hooks.clear()
 
+    @torch.no_grad()
+    def get_activations(self, loader, *names):
+        assert not isinstance(self, nn.parallel.DistributedDataParallel)
+
+        act_bank = {}
+        handles = []
+
+        def save_activation_hook(m, x, y):
+            assert isinstance(m, (nn.Conv2d, nn.Linear))
+            subfix = "_q" if self.in_quant_mode else "_fp"
+            m_name = self.layer_names[id(m)] + subfix
+            y_data = y.detach().cpu().numpy()
+            act_bank[m_name] = y_data
+
+        for n, m in self.named_modules():
+            if any(k in n for k in names) and isinstance(m, (nn.Conv2d, nn.Linear)):
+                h = m.register_forward_hook(save_activation_hook)
+                handles.append(h)
+
+        img, label = next(iter(loader))
+        _ = self(img.cuda(), enable_quant=True)
+
+        for h in handles:
+            h.remove()
+
+        return act_bank
+
     def get_param_group(self, weight_conf, quant_param_conf, ft_layers=None):
         weight_group = copy(weight_conf)
         quant_param_group = copy(quant_param_conf)

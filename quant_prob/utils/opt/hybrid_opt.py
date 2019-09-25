@@ -75,10 +75,17 @@ class HybridOpt(object):
 
     def step(self, quant_enabled=False):
         self.step_count += 1
-        if quant_enabled and self.alter_step > 0 and len(self.optimizers) > 1:
-            assert self.alter_step is not None
-            enabled_idx = (self.step_count // self.alter_step) % len(self.optimizers)
-            opt = self.optimizers[enabled_idx]
+        if quant_enabled and len(self.optimizers) > 1:
+            if self.alter_step is None:
+                # vanilla optimization: take step on W and Theta jointly
+                for opt in self.optimizers:
+                    opt.step()
+                return
+            elif self.alter_step == -1:  # only optimize weights
+                opt = self.optimizers[0]
+            else:
+                enabled_idx = (self.step_count // self.alter_step) % len(self.optimizers)
+                opt = self.optimizers[enabled_idx]
         else:
             opt = self.optimizers[0]
         opt.step()

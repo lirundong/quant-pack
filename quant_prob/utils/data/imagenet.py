@@ -35,12 +35,14 @@ def read_img_by_pil(img_path, color, mc_client=None):
 
 
 class ImageNetDataset(Dataset):
-    def __init__(self, img_dir, meta_dir, train, color=True, transform=None):
+    def __init__(self, img_dir, meta_dir, train, color=True, use_mc=True,
+                 transform=None):
         logger = logging.getLogger("global")
         self.img_dir = img_dir
         self.train = train
         self.transform = transform
         self.color = color
+        self.use_mc = use_mc
         self.metas = []
         if self.train:
             meta_file = os.path.join(meta_dir, "train.txt")
@@ -58,7 +60,7 @@ class ImageNetDataset(Dataset):
         return len(self.metas)
 
     def __getitem__(self, idx):
-        if self.mc_client is None and _mc_available:
+        if self.mc_client is None and self.use_mc and _mc_available:
             self.mc_client = mc.MemcachedClient.GetInstance(
                 "/mnt/lustre/share/memcached_client/server_list.conf",
                 "/mnt/lustre/share/memcached_client/client.conf")

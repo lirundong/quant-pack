@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-while getopts :p:qc:x:m:n:g: opt
+while getopts :p:qc:x:m:n: opt
 do
     case "$opt" in
     p) PART=$OPTARG ;;
@@ -9,21 +9,18 @@ do
     c) CONF_NAME=$OPTARG;;
     x) EXTRA="${EXTRA} --extra ${OPTARG}";;
     m) EXTRA="${EXTRA} --comment ${OPTARG}";;
-    g) GPUS_PER_JOB=$OPTARG;;
-    n) NUM_JOBS=$OPTARG;;
+    n) NUM_JOBS=$OPTARG
+       if [[ $OPTARG -ge 8 ]]; then
+            GREP_GPU=8
+       else
+            GREP_GPU=$OPTARG
+       fi;;
     *) echo "invalid flag -$opt";
        exit 1;;
     esac
 done
 
-TASKS_PER_NODE=$[8 / ${GPUS_PER_JOB:-1}]
-TOTAL_GPUS=$[$NUM_JOBS * ${GPUS_PER_JOB:-1}]
-if [[ $TOTAL_GPUS -ge 8 ]]; then
-    GREP_GPU=8
-else
-    GREP_GPU=$TOTAL_GPUS
-fi
-
+T=$(date +%Y%m%d-%H-%M-%S)
 PORT=$(shuf -i 12000-20000 -n 1)
 ROOT=..
 
@@ -33,7 +30,7 @@ if [[ ! -f $ROOT/configs/${CONF_NAME}.yaml ]]; then
 else
     CONF_FILE=${ROOT}/configs/${CONF_NAME}.yaml
     JOB_NAME=IDQ # ${CONF_NAME//\//_}
-    echo "training with configure \`$CONF_FILE\`"
+    echo "vis with configure \`$CONF_FILE\`"
 fi
 
 source r0.3.0
@@ -44,12 +41,13 @@ GLOG_vmodule=MemcachedClient=-1 srun \
   -p ${PART} \
   -n${NUM_JOBS} \
   --gres=gpu:${GREP_GPU} \
-  --ntasks-per-node=${TASKS_PER_NODE} \
+  --ntasks-per-node=${GREP_GPU} \
   --job-name=${JOB_NAME} \
   --mpi=pmi2 \
   --kill-on-bad-exit=1 \
   ${SLURM_EXTRA} \
 python $ROOT/tools/train_val_classifier.py \
+  -v \
   --conf-path ${CONF_FILE} \
   --port ${PORT} \
   ${EXTRA}

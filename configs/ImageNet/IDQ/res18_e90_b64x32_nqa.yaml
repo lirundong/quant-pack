@@ -55,6 +55,9 @@ arch:
     fp_layers: *fp_layers
     align_zero: *qz
   sync_bn: true
+  gpu_per_model: 1
+
+teacher_arch: null
 
 ## Evaluation
 eval:
@@ -69,6 +72,7 @@ loss:
   args:
     soft_weight: null
     temperature: 1.0
+    detach_ref: false
   topk: [1, 5]
 
 ## Optimization
@@ -116,6 +120,7 @@ ckpt:
 resume:
   path: final
   load_opt: true
+  load_scheduler: true
 
 ## Diagnose
 log:

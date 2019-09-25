@@ -29,7 +29,7 @@ if [[ ! -f $ROOT/configs/${CONF_NAME}.yaml ]]; then
     exit 1
 else
     CONF_FILE=${ROOT}/configs/${CONF_NAME}.yaml
-    JOB_NAME=${CONF_NAME//\//_}
+    JOB_NAME=IDQ # ${CONF_NAME//\//_}
     echo "evaluating with configure \`$CONF_FILE\`"
 fi
 

@@ -11,6 +11,7 @@ import yaml
 import torch
 import torch.multiprocessing as mp
 import torch.distributed as dist
+import numpy as np
 from torch.nn import SyncBatchNorm
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
@@ -39,6 +40,7 @@ def main():
     parser.add_argument("--conf-path", "-c", required=True, help="path of configuration file")
     parser.add_argument("--port", "-p", type=int, required=True, help="port of distributed backend")
     parser.add_argument("--evaluate_only", "-e", action="store_true", help="evaluate trained model")
+    parser.add_argument("--vis_only", "-v", action="store_true", help="visualize trained activations")
     parser.add_argument("--extra", "-x", type=json.loads, help="extra configurations in json format")
     parser.add_argument("--comment", "-m", default="", help="comment for each experiment")
     parser.add_argument("--debug", action="store_true", help="logging debug info")
@@ -168,6 +170,11 @@ def main():
                      f"\n{pformat(CONF.diagnose.diagnoser.args)}")
         model = get_diagnoser(CONF.diagnose.diagnoser.type, model, logger=TB_LOGGER, **CONF.diagnose.diagnoser.args)
         get_tasks(model, CONF.diagnose.tasks)  # TODO: should we preserve these tasks?
+
+    if CONF.vis_only:
+        logger.info("collecting activations...")
+        save_activation(model_without_ddp, val_loader, CONF.vis_path, *CONF.vis_names)
+        return
 
     if CONF.evaluate_only:
         if CONF.eval.calibrate:
@@ -328,6 +335,13 @@ def evaluate(model, loader, enable_fp=True, enable_quant=True, verbose=False, pr
         logger.info(f"{str(metric_logger)}")
 
     return metric_logger.get_meter("eval_fp_top1", "eval_fp_top5", "eval_q_top1", "eval_q_top5")
+
+@torch.no_grad()
+def save_activation(model_without_ddp, loader, path, *names):
+    if RANK == 0:
+        act_bank = model_without_ddp.get_activations(loader, *names)
+        np.savez(path, **act_bank)
+    dist.barrier()
 
 
 if __name__ == "__main__":
