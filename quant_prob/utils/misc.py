@@ -5,8 +5,10 @@ from glob import glob
 from collections import OrderedDict
 from copy import copy
 from datetime import timedelta
+from pathlib import Path
 
 import torch
+import yaml
 
 __all__ = ["accuracy", "get_eta", "get_latest_file", "update_config", "Checkpointer"]
 
@@ -48,7 +50,7 @@ def get_latest_file(path: str) -> str:
     return latest[-1]
 
 
-def update_config(conf: dict, extra: dict) -> None:
+def update_config(conf: dict, extra: dict) -> dict:
 
     def _update_item(c, k, v):
         if "." in k:
@@ -60,8 +62,22 @@ def update_config(conf: dict, extra: dict) -> None:
             c[k] = v
             return
 
+    if "__BASE__" in conf.keys():
+        base_path = conf["__BASE__"]
+        conf.pop("__BASE__")
+        if not os.path.exists(base_path):
+            # __file__: quant-prob/quant_prob/utils/misc.py
+            project_root = Path(__file__).absolute().parents[2]
+            base_path = os.path.join(project_root, base_path)
+        base_conf = yaml.load(base_path, Loader=yaml.SafeLoader)
+    else:
+        base_conf = {}
+    base_conf.update(conf)
+
     for k, v in extra.items():
-        _update_item(conf, k, v)
+        _update_item(base_conf, k, v)
+
+    return base_conf
 
 
 class Checkpointer:

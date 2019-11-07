@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-while getopts :p:qc:x:m:n: opt
+while getopts :p:qc:x:m:n:g: opt
 do
     case "$opt" in
     p) PART=$OPTARG ;;
@@ -9,18 +9,21 @@ do
     c) CONF_NAME=$OPTARG;;
     x) EXTRA="${EXTRA} --extra ${OPTARG}";;
     m) EXTRA="${EXTRA} --comment ${OPTARG}";;
-    n) NUM_JOBS=$OPTARG
-       if [[ $OPTARG -ge 8 ]]; then
-            GREP_GPU=8
-       else
-            GREP_GPU=$OPTARG
-       fi;;
+    g) GPUS_PER_JOB=$OPTARG;;
+    n) NUM_JOBS=$OPTARG;;
     *) echo "invalid flag -$opt";
        exit 1;;
     esac
 done
 
-T=$(date +%Y%m%d-%H-%M-%S)
+TASKS_PER_NODE=$[8 / ${GPUS_PER_JOB:-1}]
+TOTAL_GPUS=$[$NUM_JOBS * ${GPUS_PER_JOB:-1}]
+if [[ $TOTAL_GPUS -ge 8 ]]; then
+    GREP_GPU=8
+else
+    GREP_GPU=$TOTAL_GPUS
+fi
+
 PORT=$(shuf -i 12000-20000 -n 1)
 ROOT=..
 
@@ -41,7 +44,7 @@ GLOG_vmodule=MemcachedClient=-1 srun \
   -p ${PART} \
   -n${NUM_JOBS} \
   --gres=gpu:${GREP_GPU} \
-  --ntasks-per-node=${GREP_GPU} \
+  --ntasks-per-node=${TASKS_PER_NODE} \
   --job-name=${JOB_NAME} \
   --mpi=pmi2 \
   --kill-on-bad-exit=1 \

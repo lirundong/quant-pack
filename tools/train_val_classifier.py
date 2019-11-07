@@ -49,9 +49,9 @@ def main():
     with open(args.conf_path, "r", encoding="utf-8") as f:
         CONF = yaml.load(f, Loader=yaml.SafeLoader)
         cli_conf = {k: v for k, v in vars(args).items() if k != "extra" and not k.startswith("__")}
-        update_config(CONF, cli_conf)
         if args.extra is not None:
-            update_config(CONF, args.extra)
+            cli_conf.update(args.extra)
+        CONF = update_config(CONF, cli_conf)
         CONF = EasyDict(CONF)
 
     RANK, WORLD_SIZE = dist_init(CONF.port, CONF.arch.gpu_per_model)
@@ -335,6 +335,7 @@ def evaluate(model, loader, enable_fp=True, enable_quant=True, verbose=False, pr
         logger.info(f"{str(metric_logger)}")
 
     return metric_logger.get_meter("eval_fp_top1", "eval_fp_top5", "eval_q_top1", "eval_q_top5")
+
 
 @torch.no_grad()
 def save_activation(model_without_ddp, loader, path, *names):
