@@ -1,0 +1,43 @@
+__BASE__: configs/CIFAR10/GQ-Nets/vgg7_2bits.yaml
+BATCH_SIZE_PER_GPU: &bs 128
+
+## Dataset
+data:
+  train_loader_conf:
+    batch_size: *bs
+  train_sampler_conf:
+    batch_size: *bs
+  val_loader_conf:
+    batch_size: *bs
+
+## Optimization
+param_group:
+  conf:
+    - type: Adam
+      args: &weight_group
+        lr: !!float 4e-4
+        weight_decay: !!float 1e-4
+    - type: Adam
+      args: &quant_param_group
+        lr: !!float 1e-4
+        weight_decay: 0.0
+  groups:
+    - <<: *weight_group
+    - <<: *quant_param_group
+  args:
+    ft_layers: null
+opt:
+  args:
+    alter_step: null  # jointly optimize W and Theta
+schedule:
+  args:
+    batch_size: *bs
+
+## Resume and snapshot
+ckpt:
+  dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits_small_lr_joint_train/checkpoints/
+
+## Logging and diagnose
+log:
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits_small_lr_joint_train/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits_small_lr_joint_train/train
