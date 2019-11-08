@@ -2,7 +2,7 @@
 
 from torchvision import datasets, transforms
 
-from .cifar_subset import *
+from .cifar import *
 from .imagenet import *
 from .sampler import *
 
@@ -21,6 +21,7 @@ _train_transforms = {
     "CIFAR10": transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
+        Cutout(16, 1, False),
         transforms.ToTensor(),
         _normalize_rgb,
     ]),

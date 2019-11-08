@@ -357,13 +357,14 @@ class IDQ:
         return _decorate
 
     @torch.no_grad()
-    def update_quant_param(self, calibration_loader, calibration_steps, gamma=0.999, update_bn=False):
+    def update_quant_param(self, model, calibration_loader, calibration_steps, gamma=0.999, update_bn=False):
         self._update_weight_quant_param()
         self._prepare_calibration_hooks(gamma, update_bn)
+        device = next(iter(self.parameters())).device
         for step, (img, label) in enumerate(calibration_loader):
             if step > calibration_steps:
                 break
-            _ = self(img, enable_quant=False, update_quant_param=True)
+            _ = model(img.to(device, non_blocking=True), enable_quant=False, update_quant_param=True)
         self.ddp_forward_hooks.clear()
 
     @torch.no_grad()
@@ -374,14 +375,15 @@ class IDQ:
         model_without_ddp = model.module
         model_without_ddp._update_weight_quant_param()
         model_without_ddp._prepare_calibration_hooks(gamma, update_bn)
+        device = next(iter(self.parameters())).device
         logger = getLogger("global")
         for step, (img, label) in enumerate(calibration_loader):
             if step < calibration_steps:
-                _ = model(img, enable_quant=False, update_quant_param=True)
+                _ = model(img.to(device, non_blocking=True), enable_quant=False, update_quant_param=True)
                 logger.debug(
                     f"[calib step {step:2d}]: max GRAM: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB")
             elif update_bn and step < calibration_steps * 2:
-                _ = model(img, enable_fp=False, update_bn=True)
+                _ = model(img.to(device, non_blocking=True), enable_fp=False, update_bn=True)
                 logger.debug(
                     f"[update BN step {step:2d}]: max GRAM: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB")
             else:

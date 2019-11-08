@@ -6,6 +6,7 @@ from collections import OrderedDict
 from copy import copy
 from datetime import timedelta
 from pathlib import Path
+from deepmerge import Merger
 
 import torch
 import yaml
@@ -69,10 +70,17 @@ def update_config(conf: dict, extra: dict) -> dict:
             # __file__: quant-prob/quant_prob/utils/misc.py
             project_root = Path(__file__).absolute().parents[2]
             base_path = os.path.join(project_root, base_path)
-        base_conf = yaml.load(base_path, Loader=yaml.SafeLoader)
+        base_conf = yaml.load(open(base_path, "r", encoding="utf-8"),
+                              Loader=yaml.SafeLoader)
     else:
         base_conf = {}
-    base_conf.update(conf)
+
+    # strategies for merging configs:
+    #  - override lists in BASE by the counterparts in current config, such that
+    #    each param-group can get the latest, non-duplicated config;
+    #  - merge dicts recursively, such that derived config can be written as concisely as possible;
+    conf_merger = Merger([(list, "override"), (dict, "merge")], ["override"], ["override"])
+    conf_merger.merge(base_conf, conf)
 
     for k, v in extra.items():
         _update_item(base_conf, k, v)

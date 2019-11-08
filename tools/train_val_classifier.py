@@ -39,6 +39,7 @@ def main():
     parser = ArgumentParser(f"Probabilistic quantization neural networks.")
     parser.add_argument("--conf-path", "-c", required=True, help="path of configuration file")
     parser.add_argument("--port", "-p", type=int, required=True, help="port of distributed backend")
+    parser.add_argument("--solo", "-s", action="store_true", help="run this script in solo (local machine) mode")
     parser.add_argument("--evaluate_only", "-e", action="store_true", help="evaluate trained model")
     parser.add_argument("--vis_only", "-v", action="store_true", help="visualize trained activations")
     parser.add_argument("--extra", "-x", type=json.loads, help="extra configurations in json format")
@@ -54,14 +55,14 @@ def main():
         CONF = update_config(CONF, cli_conf)
         CONF = EasyDict(CONF)
 
-    RANK, WORLD_SIZE = dist_init(CONF.port, CONF.arch.gpu_per_model)
+    RANK, WORLD_SIZE = dist_init(CONF.port, CONF.arch.gpu_per_model, CONF.solo)
     CONF.dist = WORLD_SIZE > 1
 
     if CONF.arch.gpu_per_model == 1:
-        fp_device = get_devices(CONF.arch.gpu_per_model)
+        fp_device = get_devices(CONF.arch.gpu_per_model, RANK)
         q_device = fp_device
     else:
-        fp_device, q_device = get_devices(CONF.arch.gpu_per_model)
+        fp_device, q_device = get_devices(CONF.arch.gpu_per_model, RANK)
     DEVICE = fp_device
 
     logger = init_log(LOGGER_NAME, CONF.debug, f"{CONF.log.file}_{EXP_DATETIME}.log")
@@ -210,7 +211,9 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
 
         if CONF.quant.calib.required_on_training and scheduler.do_calibration:
             logger.info(f"resetting quantization ranges at iteration {scheduler.last_iter}...")
-            model_without_ddp.update_ddp_quant_param(
+            update_quant_func = model_without_ddp.update_ddp_quant_param if CONF.dist else \
+                                model_without_ddp.update_quant_param
+            update_quant_func(
                 model,
                 train_loader,
                 CONF.quant.calib.steps,
@@ -295,14 +298,14 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
                     scheduler=scheduler.state_dict(),
                     accuracy=BEST_ACCURACY
                 )
-            dist.barrier()
+            barrier()
 
         if step % CONF.ckpt.freq == 0:
             checkpointer.write_to_disk(f"ckpt_step_{step}.pth")
-            dist.barrier()
+            barrier()
 
     checkpointer.write_to_disk(f"ckpt_final.pth")
-    dist.barrier()
+    barrier()
 
 
 @torch.no_grad()
@@ -312,7 +315,7 @@ def evaluate(model, loader, enable_fp=True, enable_quant=True, verbose=False, pr
     metric_logger = MetricLogger(track_global_stat=True)
 
     if progress_bar:
-        loader = tqdm(loader, f"[RANK {dist.get_rank():2d}]")
+        loader = tqdm(loader, f"[RANK {RANK:2d}]")
 
     for img, label in loader:
         n = img.size(0)
@@ -342,7 +345,7 @@ def save_activation(model_without_ddp, loader, path, *names):
     if RANK == 0:
         act_bank = model_without_ddp.get_activations(loader, *names)
         np.savez(path, **act_bank)
-    dist.barrier()
+    barrier()
 
 
 if __name__ == "__main__":

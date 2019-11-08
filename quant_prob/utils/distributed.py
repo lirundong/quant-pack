@@ -10,7 +10,7 @@ import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 
-__all__ = ["get_devices", "get_ddp_model", "dist_init"]
+__all__ = ["get_devices", "get_ddp_model", "dist_init", "barrier"]
 
 
 def _get_master_ip_slurm():
@@ -37,12 +37,15 @@ def _disable_non_master_print(is_master):
     __builtin__.print = _print
 
 
-def dist_init(port, gpu_per_model=1):
+def dist_init(port, gpu_per_model=1, allow_solo=False):
     try:
         proc_id = int(os.environ["SLURM_PROCID"])
         n_tasks = int(os.environ["SLURM_NTASKS"])
     except KeyError as e:
-        raise RuntimeError(f"this function only works on SLURM cluster: {e}")
+        if allow_solo:
+            return 0, 1
+        else:
+            raise RuntimeError(f"distributed initialization failed: {e}")
 
     if n_tasks > 1:
         assert port >= 2048, f"port {port} is reserved"
@@ -114,3 +117,10 @@ def get_ddp_model(model, devices=None, debug=False):
     ddp_model = DistributedDataParallel(model, device_ids=devices, find_unused_parameters=True)
 
     return ddp_model, model_without_ddp
+
+
+def barrier():
+    if dist.is_available() and dist.is_initialized():
+        dist.barrier()
+    else:
+        return

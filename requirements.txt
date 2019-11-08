@@ -8,3 +8,4 @@ pyyaml
 pytest
 easydict
 tqdm
+deepmerge
