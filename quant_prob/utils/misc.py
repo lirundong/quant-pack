@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import os
-import shutil
+import signal
 from io import BytesIO
 from glob import glob
 from datetime import timedelta
@@ -105,6 +105,15 @@ class Checkpointer:
         self.latest_ckpt = None
         self.best_ckpt = None
         os.makedirs(ckpt_dir, exist_ok=True)
+        # bind `self` to `_handle_sigint`
+        signal.signal(signal.SIGINT, lambda sig, frame: Checkpointer._handle_sigint(self, sig, frame))
+
+    @staticmethod
+    def _handle_sigint(self, sig, frame):
+        print(f"\nwaite a minute, writing checkpoints to disk...", flush=True)
+        self.write_to_disk()
+        print(f"checkpoints have been writen to {self.ckpt_dir}", flush=True)
+        exit(0)
 
     def save(self, step, accuracy, **kwargs):
         if not self.is_master:

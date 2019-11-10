@@ -197,7 +197,7 @@ def main():
 def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_model=None):
     global BEST_ACCURACY
     logger = logging.getLogger(LOGGER_NAME)
-    checkpointer = Checkpointer(os.path.join(CONF.ckpt.dir, EXP_DATETIME), RANK)
+    checkpointer = Checkpointer(CONF.ckpt.dir, RANK)
     model_without_ddp = model.module if CONF.dist else model
     metric_logger = MetricLogger(TB_LOGGER, last_iter=scheduler.last_iter)
     metric_logger.add_meter("LR", SmoothedValue(fmt="{value:.4f}"))

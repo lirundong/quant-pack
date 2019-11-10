@@ -3,8 +3,6 @@
 import collections
 import numbers
 
-from torch.optim.lr_scheduler import _LRScheduler
-
 __all__ = ["IterationScheduler"]
 
 ScheduledOptCfg = collections.namedtuple(
@@ -63,7 +61,11 @@ class IterationScheduler:
                 opt_cfg = list(opt_cfg)
             if opt_cfg[3] == "epoch":
                 opt_cfg[1] *= self.iters_per_epoch
-                opt_cfg[2] *= self.iters_per_epoch
+                if opt_cfg[2] != -1:
+                    opt_cfg[2] *= self.iters_per_epoch
+            if opt_cfg[2] == -1:
+                # this schedule terminates at training ending
+                opt_cfg[2] = self.total_iters + 1
             try:
                 opt_schedule = ScheduledOptCfg(*opt_cfg)
             except TypeError as e:
