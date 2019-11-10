@@ -1,0 +1,32 @@
+# following the set of LR-Nets
+__BASE__: configs/CIFAR10/GQ-Nets/vgg7_2bits.yaml
+
+## Optimization
+param_group:
+  conf:
+    - type: Adam
+      args: &weight_group
+        lr: !!float 0.01
+        weight_decay: !!float 1e-4
+    - type: Adam
+      args: &quant_param_group
+        lr: !!float 1e-4
+        weight_decay: 0.0
+  groups:
+    - <<: *weight_group
+    - <<: *quant_param_group
+schedule:
+  args:
+    scheduled_variables:
+      - ["soft_w", 1.0, 1.0, null, null, -1]
+      - ["hard_w", 1.0, 1.0, null, null, -1]
+      - ["ref_w", 1.0, 1.0, null, null, -1]
+
+## Resume and snapshot
+ckpt:
+  dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits_large_lr/checkpoints/
+
+## Logging and diagnose
+log:
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits_large_lr/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits_large_lr/train

@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-import warnings
 import logging
 import os
 import io
@@ -13,7 +12,6 @@ try:
     _mc_available = True
 except ImportError:
     _mc_available = False
-    warnings.warn("memcached not available")
 
 __all__ = ["ImageNetDataset"]
 

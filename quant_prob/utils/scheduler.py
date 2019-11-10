@@ -1,206 +1,249 @@
 # -*- coding: utf-8 -*-
 
 import collections
-from logging import getLogger
+import numbers
+
+from torch.optim.lr_scheduler import _LRScheduler
 
 __all__ = ["IterationScheduler"]
 
-ScheduledVariable = collections.namedtuple(
-    "ScheduledVariable",
+ScheduledOptCfg = collections.namedtuple(
+    "ScheduledOptCfg",
+    field_names=["name", "start_iter", "end_iter", "iter_or_epoch"],
+)
+
+ScheduledVariableCfg = collections.namedtuple(
+    "ScheduledVariableCfg",
     field_names=["name", "init_value", "target_value",
-                 "warmup_start_step", "warmup_done_step", "terminate_step"],
+                 "warmup_start_iter", "warmup_done_iter", "terminate_iter",
+                 "iter_or_epoch"],
 )
 
 
-class IterationScheduler(object):
-    def __init__(self, optimizer, milestones, dataset_size, batch_size, total_iters,
-                 warmup_epochs=0, warmup_lr=0, world_size=1, gamma=0.1,
-                 last_iter=-1, enable_quant_at=None, scheduled_variables=None,
-                 verbose=False):
-        batch_size *= world_size
-        iters_per_epoch = dataset_size // batch_size
-        if last_iter == -1:
-            for group in optimizer.param_groups:
-                group.setdefault('initial_lr', group['lr'])
-        else:
-            for i, group in enumerate(optimizer.param_groups):
-                if 'initial_lr' not in group:
-                    raise KeyError("param 'initial_lr' is not specified "
-                                   "in param_groups[{}] when resuming an optimizer".format(i))
+class IterationScheduler:
+    # TODO:
+    #  1. use torch.opt schedulers to adjust learning rate, get rid of the ad-hoc.
+    #     Note that from pytorch-1.1, schedulers starts from `last_epoch=0`
+    #  2. type-hinting
 
-        if warmup_lr > 0:
-            self.base_lrs = [warmup_lr, ] * len(optimizer.param_groups)
-        else:
-            self.base_lrs = list(map(lambda group: group['initial_lr'], optimizer.param_groups))
-        self.target_lrs = list(map(lambda group: group['initial_lr'] * world_size, optimizer.param_groups))
+    def __init__(self,
+                 named_opt_schedulers,
+                 scheduled_opt_cfgs,
+                 scheduled_variable_cfgs,
+                 iters_per_epoch,
+                 quant_start_iter,
+                 total_iters):
 
-        if not isinstance(milestones, collections.Iterable):
-            milestones = [milestones, ]
-
-        self.milestones = [m * iters_per_epoch for m in milestones]
-        self.warmup_iters = warmup_epochs * iters_per_epoch
+        self.opt_schedulers = collections.OrderedDict(named_opt_schedulers)
         self.iters_per_epoch = iters_per_epoch
+        self.quant_start_iter = quant_start_iter
         self.total_iters = total_iters
-        self.world_size = world_size
-        self.gamma = gamma
-        self.optimizer = optimizer
-        self.last_iter = last_iter
 
-        if enable_quant_at == "begin":
-            self.enable_quant_intervals = [(1, self.total_iters + 1), ]  # step starts from 1
-        elif enable_quant_at == "segmented":
-            self.enable_quant_intervals = []
-        elif enable_quant_at is not None:
-            self.enable_quant_intervals = [(enable_quant_at * self.iters_per_epoch, self.total_iters + 1), ]
-        else:
-            self.enable_quant_intervals = []
+        self._add_scheduled_opt_cfgs(*scheduled_opt_cfgs)
+        self._add_scheduled_variable_cfgs(*scheduled_variable_cfgs)
 
-        self.variable_schedules = collections.defaultdict(list)
-        self.variable_states = collections.OrderedDict()
-        self.const_variables = collections.OrderedDict()
-        if scheduled_variables is not None:
-            self.add_scheduled_variables(*scheduled_variables)
+    def _add_scheduled_opt_cfgs(self, *opt_cfgs: ScheduledOptCfg):
+        """Store optimizer schedules and their activated periods.
 
-        self._update_next_milestone()
-        self.step(last_iter + 1)
+        Fields of scheduled optimizers `opt_cfg`s are:
 
-        if verbose:
-            logger = getLogger("global")
-            logger.info(str(self))
+          ["name", "start_iter", "end_iter", "iter_or_epoch"]
 
-    def _update_next_milestone(self):
-        remain_milestones = [m for m in self.milestones if m > self.last_iter]
-        self.next_milestone = min(remain_milestones) if len(remain_milestones) > 0 else None
-
-    def __str__(self):
-        info_tokens = [f"milestone iters: {self.milestones}", ]
-        if self.warmup_iters > 0:
-            info_tokens += [f"warmup iters: {self.warmup_iters}",
-                            f"LR before warmup: {self.base_lrs}",
-                            f"LR after warmup: {self.target_lrs}"]
-        if len(self.enable_quant_intervals) > 0:
-            info_tokens += [f"enable quantization at iter {self.enable_quant_intervals}"]
-
-        return "\n".join(info_tokens)
-
-    def add_scheduled_variables(self, *variables):
-        for variable in variables:
-            assert isinstance(variable, (tuple, list))
-            # fields: name, init_value, target_value, warmup_start_step, warmup_done_step, terminate_step
+        note that we convert all start/end_epochs to iters if opt_schedule get
+        `iters_or_epochs=="epoch"`, but only invoke its `step()` by number of
+        epochs.
+        """
+        self.per_iter_opt_schedules = []
+        self.per_epoch_opt_schedules = []
+        for opt_cfg in opt_cfgs:
+            assert isinstance(opt_cfg, (list, tuple)) and len(opt_cfg) == 4
+            assert opt_cfg[0] in self.opt_schedulers
+            assert opt_cfg[3] == "iter" or opt_cfg[3] == "epoch"
+            if isinstance(opt_cfg, tuple):
+                opt_cfg = list(opt_cfg)
+            if opt_cfg[3] == "epoch":
+                opt_cfg[1] *= self.iters_per_epoch
+                opt_cfg[2] *= self.iters_per_epoch
             try:
-                scheduled_variable = ScheduledVariable(*variable)
+                opt_schedule = ScheduledOptCfg(*opt_cfg)
             except TypeError as e:
-                raise RuntimeError(f"When building {ScheduledVariable.__name__} from `{variable}`: {e}")
-            if scheduled_variable.warmup_start_step is not None:
-                terminate_step = scheduled_variable.terminate_step * self.iters_per_epoch \
-                    if scheduled_variable.terminate_step != -1 \
-                    else self.total_iters + 1
-                scheduled_variable = scheduled_variable._replace(
-                    warmup_start_step=scheduled_variable.warmup_start_step * self.iters_per_epoch,
-                    warmup_done_step=scheduled_variable.warmup_done_step * self.iters_per_epoch,
-                    terminate_step=terminate_step,
-                )
-                self.variable_schedules[scheduled_variable.name].append(scheduled_variable)
-                self.enable_quant_intervals.append((scheduled_variable.warmup_start_step, scheduled_variable.terminate_step, ))
+                raise RuntimeError(f"When building {ScheduledOptCfg.__name__} from `{opt_cfg}`: {e}")
+            if opt_schedule.iter_or_epoch == "iter":
+                self.per_iter_opt_schedules.append(opt_schedule)
             else:
-                self.const_variables[scheduled_variable.name] = \
-                    (scheduled_variable.init_value, scheduled_variable.target_value, )
+                self.per_epoch_opt_schedules.append(opt_schedule)
+        if len(self.per_iter_opt_schedules) > 0:
+            last_iters = [self.opt_schedulers[opt.name].last_epoch
+                          for opt in self.per_iter_opt_schedules]
+        elif len(self.per_epoch_opt_schedules) > 0:
+            last_iters = [self.opt_schedulers[opt.name].last_epoch * self.iters_per_epoch
+                          for opt in self.per_epoch_opt_schedules]
+        else:
+            last_iters = [0, ]
+        assert len(set(last_iters)) == 1, f"`scheduled_opts` get different `last_epoch` field"
+        self.last_iter = last_iters[0]
 
-        for k, v in self.variable_schedules.items():
-            self.variable_schedules[k] = sorted(v, key=lambda x: x.warmup_start_step)
-        if len(self.enable_quant_intervals) > 0:
-            self.enable_quant_intervals.sort(key=lambda x: x[0])
+    def _add_scheduled_variable_cfgs(self, *var_cfgs: ScheduledVariableCfg):
+        """Add var_cfg schedules by descriptions in configuration files.
 
-    def update_scheduled_variables(self):
-        for var_name, schedules in self.variable_schedules.items():
-            if self.in_quant_interval:
-                for schedule in schedules:
-                    if self.last_iter < schedule.warmup_start_step or schedule.terminate_step <= self.last_iter:
-                        continue
-                    elif schedule.warmup_start_step <= self.last_iter < schedule.warmup_done_step:  # warmup
-                        delta = (schedule.target_value - schedule.init_value) \
-                                / (schedule.warmup_done_step - schedule.warmup_start_step + 1)
-                        warmed_steps = self.last_iter - schedule.warmup_start_step
-                        self.variable_states[var_name] = schedule.init_value + delta * warmed_steps
-                    else:  # target value
-                        self.variable_states[var_name] = schedule.target_value
+        The valid config formats of scheduled_variables are:
+        *  a yaml list of 6 fields: [name, init_value, target_value,
+           warmup_start_step, warmup_done_step, terminate_step].
+
+           This kind of variables are linearly warmed-up from `init_value` to
+           `target_value` during the interval of [warmup_start_step,
+           warmup_done_step], then reduce to 0 immediately at `terminate_step`.
+           Note that one var_cfg could have multiple such descriptions, each
+           description forms one schedule period;
+        *  a yaml list of 2 fields: [name, ref_var_name]. The var_cfg will be
+           scaled by the ratio of $\frac{*ref_var_name}{\sum{*ref_var_names}}$;
+        *  a yaml list of 2 fields: [name, val]
+        """
+        self.linear_warmup_variables = collections.defaultdict(list)
+        self.const_variables = collections.OrderedDict()
+        self.dynamic_scaling_variables = collections.OrderedDict()
+        self.scaling_reference_names = set()
+        self.variable_states = collections.OrderedDict()
+
+        for var_cfg in var_cfgs:
+            assert isinstance(var_cfg, (tuple, list))
+            if len(var_cfg) == 2:
+                if isinstance(var_cfg[1], str):
+                    self.dynamic_scaling_variables[var_cfg[0]] = var_cfg[1]
+                    self.scaling_reference_names.add(var_cfg[1])
+                elif isinstance(var_cfg[1], numbers.Number):
+                    self.const_variables[var_cfg[0]] = var_cfg[1]
+                else:
+                    raise ValueError(f"unknown var_cfg schedule: {var_cfg}")
+            elif len(var_cfg) == 7:
+                if isinstance(var_cfg, tuple):
+                    var_cfg = list(var_cfg)
+                if var_cfg[6] == "epoch":
+                    # convert "warmup_start_iter", "warmup_done_iter" and
+                    # "terminate_iter" (if not -1) from epochs to iters
+                    var_cfg[3] *= self.iters_per_epoch
+                    var_cfg[4] *= self.iters_per_epoch
+                    if var_cfg[5] != -1:
+                        var_cfg[5] *= self.iters_per_epoch
+                if var_cfg[5] == -1:
+                    # this schedule terminates at training ending
+                    var_cfg[5] = self.total_iters + 1
+                try:
+                    scheduled_variable = ScheduledVariableCfg(*var_cfg)
+                except TypeError as e:
+                    raise RuntimeError(f"When building {ScheduledVariableCfg.__name__} from `{var_cfg}`: {e}")
+                assert scheduled_variable.warmup_start_iter is not None, \
+                    "you are using legacy configuration for const variables, " \
+                    "please convert to 2 fields format of: [name, val]"
+                self.linear_warmup_variables[scheduled_variable.name].append(scheduled_variable)
             else:
-                self.variable_states[var_name] = 0.
-        for var_name, consts in self.const_variables.items():
-            if self.quant_enabled:
-                self.variable_states[var_name] = consts[1]  # target value
-            else:
-                self.variable_states[var_name] = consts[0]  # init value
+                raise ValueError(f"Invalid schedule_variable config: {var_cfg}")
 
-    def get_scheduled_variables(self, *var_names):
-        ret = []
-        for var_name in var_names:
-            ret.append(self.get_scheduled_variable(var_name))
-        return ret
+        for var_name, var_schedules in self.linear_warmup_variables.items():
+            # sort and check schedules are not overlapping
+            sorted_schedules = sorted(var_schedules, key=lambda x: x.warmup_start_iter)
+            for i in range(len(sorted_schedules) - 1):
+                assert sorted_schedules[i].terminate_iter < sorted_schedules[i + 1].warmup_start_iter
+            self.linear_warmup_variables[var_name] = sorted_schedules
 
-    def get_scheduled_variable(self, var_name):
-        return self.variable_states[var_name]
+    @property
+    def quant_enabled(self):
+        return self.quant_start_iter <= self.last_iter
+
+    @property
+    def do_calibration(self):
+        return self.quant_start_iter == self.last_iter
 
     def state_dict(self):
-        return {key: value for key, value in self.__dict__.items() if key != 'optimizer'}
+        scheduler_states = collections.OrderedDict()
+        for k, v in self.opt_schedulers.items():
+            scheduler_state = v.state_dict()
+            scheduler_states[k] = scheduler_state
+        self_states = collections.OrderedDict()
+        self_states.update({k: v for k, v in self.__dict__.items() if
+                            (not k.startswith("__") and k != "scheduled_opts")})
+        self_states["scheduled_opts"] = scheduler_states
+        return self_states
 
     def load_state_dict(self, state_dict):
-        if state_dict["iters_per_epoch"] != self.iters_per_epoch:
-            logger = getLogger("global")
-            logger.warning(f"`state_dict` get different `iters_per_epoch` than this experiment, "
-                           f"so we only recover the actual number of gone iterations")
-            last_iter = state_dict["last_iter"] // state_dict["iters_per_epoch"] * self.iters_per_epoch
-            self.step(last_iter)
+        scheduler_states = state_dict["scheduled_opts"]
+        for k, v in self.opt_schedulers.items():
+            v.load_state_dict(scheduler_states[k])
+        state_dict.pop("scheduled_opts")
+        self.__dict__.update(state_dict)
+
+    def _get_variable_state(self, var_name, **ref_vals):
+        if var_name in self.variable_states:
+            # linearly-warmup variables
+            return self.variable_states[var_name]
+
+        elif var_name in self.const_variables:
+            # const variables
+            return self.const_variables[var_name]
+
+        elif var_name in self.dynamic_scaling_variables:
+            # dynamically scaling by other reference variables
+            var_ref_val = ref_vals[self.dynamic_scaling_variables[var_name]]
+            total_ref_val = sum(ref_vals[ref_name] for ref_name in self.scaling_reference_names)
+            return var_ref_val / total_ref_val
+
         else:
-            self.__dict__.update(state_dict)
+            raise ValueError(f"unregistered variable name `{var_name}`")
+
+    def get_scheduled_variables(self, *var_names, **ref_vals):
+        ret = []
+        for var_name in var_names:
+            ret.append(self._get_variable_state(var_name, **ref_vals))
+        return ret
+
+    def _update_variable_states(self):
+
+        def _in_schedule_interval(_schedule):
+            return _schedule.warmup_start_iter <= self.last_iter < _schedule.iterminate_iter
+
+        def _activated_schedule(_schedules):
+            _ret_schedule = None
+            for _schedule in _schedules:
+                if _in_schedule_interval(_schedule):
+                    _ret_schedule = _schedule
+                    break
+            return _ret_schedule
+
+        def _in_schedule_warmup(_schedule):
+            return _schedule.warmup_start_iter <= self.last_iter < _schedule.warmup_done_iter
+
+        for var_name, var_schedules in self.linear_warmup_variables.items():
+            schedule = _activated_schedule(var_schedules)
+            if schedule is not None:
+                if _in_schedule_warmup(schedule):
+                    delta = (schedule.target_value - schedule.init_value) \
+                            / (schedule.warmup_done_iter - schedule.warmup_start_iter + 1)
+                    warmed_iters = self.last_iter - schedule.warmup_start_iter
+                    self.variable_states[var_name] = schedule.init_value + delta * warmed_iters
+                else:
+                    self.variable_states[var_name] = schedule.target_value
+            else:
+                self.variable_states[var_name] = 0.
+
+    def _update_opt_schedulers(self):
+
+        def _in_schedule_interval(_schedule):
+            return _schedule.start_iter <= self.last_iter < _schedule.end_iter
+
+        def _check_and_take_step(_schedules):
+            for _schedule in _schedules:
+                if _in_schedule_interval(_schedule):
+                    _scheduler = self.opt_schedulers[_schedule.name]
+                    _scheduler.step()
+
+        if self.last_iter > 0 and self.last_iter % self.iters_per_epoch == 0:
+            _check_and_take_step(self.per_epoch_opt_schedules)
+
+        _check_and_take_step(self.per_iter_opt_schedules)
 
     def step(self, iteration=None):
         if iteration is None:
             iteration = self.last_iter + 1
         self.last_iter = iteration
-
-        self.update_scheduled_variables()
-
-        # linear warmup LR
-        if self.last_iter < self.warmup_iters:
-            for param, base_lr, target_lr in zip(self.optimizer.param_groups, self.base_lrs, self.target_lrs):
-                lr_delta = (target_lr - base_lr) / self.warmup_iters
-                lr = base_lr + lr_delta * self.last_iter
-                param["lr"] = lr
-            return
-
-        # scale LR by world_size
-        if self.last_iter == self.warmup_iters and self.world_size > 1:
-            for param_group, target_lr in zip(self.optimizer.param_groups, self.target_lrs):
-                param_group["lr"] = target_lr
-            return
-
-        # LR decay
-        if self.next_milestone is None or self.last_iter < self.next_milestone:
-            return
-
-        self._update_next_milestone()
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] *= self.gamma
-
-    @property
-    def quant_enabled(self):
-        if len(self.enable_quant_intervals) > 0 and self.enable_quant_intervals[0][0] <= self.last_iter:
-            return True
-        else:
-            return False
-
-    @property
-    def in_quant_interval(self):
-        if len(self.enable_quant_intervals) > 0 and \
-                any(interval[0] <= self.last_iter < interval[1] for interval in self.enable_quant_intervals):
-            return True
-        else:
-            return False
-
-    @property
-    def do_calibration(self):
-        if len(self.enable_quant_intervals) > 0 and self.enable_quant_intervals[0][0] == self.last_iter:
-            return True
-        else:
-            return False
+        self._update_variable_states()
+        self._update_opt_schedulers()

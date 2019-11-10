@@ -61,18 +61,12 @@ opt:
   args:
     alter_step: 1
 schedule:
-  args:
-    milestones: [170]
-    gamma: 0.1
-    batch_size: *bs
-    warmup_epochs: 0
-    enable_quant_at: begin
-    scheduled_variables:
-      # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch
-      # warmup_{...}_epoch is the index of `schedule.milestones`, setup to null means do not tune it
-      - ["soft_w", 0.5, 0.5, null, null, -1]
-      - ["hard_w", 0.5, 0.5, null, null, -1]
-      - ["ref_w", 0.5, 0.5, null, null, -1]
+  quant_start_iter: 0
+  opt_cfgs: []
+  variable_cfgs:
+    - ["soft_w", 0.5]
+    - ["hard_w", 0.5]
+    - ["ref_w", 0.5]
 
 ## Evaluation
 eval:

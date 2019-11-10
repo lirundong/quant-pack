@@ -4,6 +4,7 @@ import os
 import pickle
 
 import numpy as np
+import torch
 from torch.utils.data import Dataset
 from PIL import Image
 
@@ -17,12 +18,16 @@ class Cutout:
         self.mask_size = mask_size
         self.p = p
         self.cutout_inside = cutout_inside
-        self.mask_color = mask_color
         self.mask_size_half = mask_size // 2
         self.offset = 1 if mask_size % 2 == 0 else 0
 
+        mask_color = torch.tensor(mask_color, dtype=torch.float32)
+        mask_color = mask_color.reshape(mask_color.size(0), 1, 1)  # so it can broadcast
+        self.mask_color = mask_color
+
     def __call__(self, image):
-        image = np.asarray(image).copy()
+        assert torch.is_tensor(image)
+        assert image.size(0) == self.mask_color.size(0)
 
         if np.random.random() > self.p:
             return image
@@ -46,7 +51,8 @@ class Cutout:
         ymin = max(0, ymin)
         xmax = min(w, xmax)
         ymax = min(h, ymax)
-        image[ymin:ymax, xmin:xmax] = self.mask_color
+
+        image[:, ymin:ymax, xmin:xmax] = self.mask_color
         return image
 
     def __repr__(self):

@@ -1,0 +1,45 @@
+__BASE__: configs/CIFAR10/GQ-Nets/vgg7_2bits.yaml
+BATCH_SIZE_PER_GPU: &bs 128
+
+## Dataset
+data:
+  dataset:
+    args:
+      root: /home/lirundong/HDD1/Datasets/CIFAR
+      download: true
+  train_loader_conf:
+    batch_size: *bs
+  train_sampler_conf:
+    batch_size: *bs
+  val_loader_conf:
+    batch_size: *bs
+
+## Optimization
+param_group:
+  conf:
+    - type: SGD
+      args: &weight_group
+        lr: !!float 1e-3
+        weight_decay: !!float 1e-4
+        momentum: 0.9
+        nesterov: true
+    - type: Adam
+      args: &quant_param_group
+        lr: !!float 1e-4
+        weight_decay: 0.0
+  groups:
+    - <<: *weight_group
+    - <<: *quant_param_group
+schedule:
+  args:
+    batch_size: *bs
+    milestones: [170, 250]
+
+## Resume and snapshot
+ckpt:
+  dir: /home/lirundong/HDD1/quant-prob/cifar10/vgg7/2bits_small_lr_sgd/checkpoints/
+
+## Logging and diagnose
+log:
+  tb_dir: /home/lirundong/HDD1/quant-prob/cifar10/vgg7/2bits_small_lr_sgd/tb_logs/
+  file: /home/lirundong/HDD1/quant-prob/cifar10/vgg7/2bits_small_lr_sgd/train

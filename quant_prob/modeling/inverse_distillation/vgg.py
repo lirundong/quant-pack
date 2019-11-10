@@ -35,11 +35,12 @@ class CIFAR_VGG(nn.Module):
     def __init__(self, features, num_classes=10, init_weights=True):
         super(CIFAR_VGG, self).__init__()
         self.features = features
-        self.avgpool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.pooling = nn.MaxPool2d(kernel_size=2, stride=2)
         self.classifier = nn.Sequential(
+            # nn.Dropout(p=0.5),
             nn.Linear(512 * 4 * 4, 1024),
             nn.ReLU(True),
-            nn.Dropout(),
+            nn.Dropout(p=0.5),
             nn.Linear(1024, num_classes),
         )
         if init_weights:
@@ -47,7 +48,7 @@ class CIFAR_VGG(nn.Module):
 
     def forward(self, x):
         x = self.features(x)
-        x = self.avgpool(x)
+        x = self.pooling(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
         return x

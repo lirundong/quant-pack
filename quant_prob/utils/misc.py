@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import os
+import shutil
+from io import BytesIO
 from glob import glob
-from collections import OrderedDict
-from copy import copy
 from datetime import timedelta
 from pathlib import Path
 from deepmerge import Merger
@@ -97,33 +97,35 @@ class Checkpointer:
                 rank = dist.get_rank()
             else:
                 rank = 0
-        self.is_master = rank == 0
+        self.is_master = rank is 0
         if not self.is_master:
             return
-        self.registry = OrderedDict()
         self.ckpt_dir = ckpt_dir
+        self.best_acc = 0
+        self.latest_ckpt = None
+        self.best_ckpt = None
         os.makedirs(ckpt_dir, exist_ok=True)
 
-    @staticmethod
-    def _copy_to_cpu(**kwargs):
-        cpu = torch.device("cpu")
-        cpu_dict = OrderedDict()
-        for k, v in kwargs.items():
-            if torch.is_tensor(v):
-                cpu_dict[k] = v.to(cpu)
-            else:
-                cpu_dict[k] = copy(v)
-        return cpu_dict
-
-    def save(self, **kwargs):
+    def save(self, step, accuracy, **kwargs):
         if not self.is_master:
             return
-        cpu_dict = self._copy_to_cpu(**kwargs)
-        self.registry.update(cpu_dict)
+        f = BytesIO()
+        torch.save({
+            "step": step,
+            "accuracy": accuracy,
+            **kwargs,
+        }, f)
+        self.latest_ckpt = f
+        if accuracy > self.best_acc:
+            self.best_acc = accuracy
+            self.best_ckpt = f
 
-    def write_to_disk(self, fname):
-        if not self.is_master or len(self.registry) == 0:
+    def write_to_disk(self):
+        if not self.is_master:
             return
-        ckpt_path = os.path.join(self.ckpt_dir, fname)
-        with open(ckpt_path, "wb") as f:
-            torch.save(self.registry, f)
+        assert self.latest_ckpt is not None and self.best_ckpt is not None, \
+            "did you call `save` before `write_to_dick`?"
+        with open(os.path.join(self.ckpt_dir, "ckpt_latest.pth"), "wb") as f:
+            f.write(self.latest_ckpt.getbuffer())
+        with open(os.path.join(self.ckpt_dir, "ckpt_best.pth"), "wb") as f:
+            f.write(self.best_ckpt.getbuffer())

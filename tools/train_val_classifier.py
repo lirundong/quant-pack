@@ -10,7 +10,6 @@ from pprint import pformat
 import yaml
 import torch
 import torch.multiprocessing as mp
-import torch.distributed as dist
 import numpy as np
 from torch.nn import SyncBatchNorm
 from torch.utils.data import DataLoader
@@ -38,7 +37,7 @@ def main():
 
     parser = ArgumentParser(f"Probabilistic quantization neural networks.")
     parser.add_argument("--conf-path", "-c", required=True, help="path of configuration file")
-    parser.add_argument("--port", "-p", type=int, required=True, help="port of distributed backend")
+    parser.add_argument("--port", "-p", type=int, help="port of distributed backend")
     parser.add_argument("--solo", "-s", action="store_true", help="run this script in solo (local machine) mode")
     parser.add_argument("--evaluate_only", "-e", action="store_true", help="evaluate trained model")
     parser.add_argument("--vis_only", "-v", action="store_true", help="visualize trained activations")
@@ -95,12 +94,12 @@ def main():
 
     param_groups = model.get_param_group(*CONF.param_group.groups, **CONF.param_group.args)
     opt = HybridOpt(param_groups, CONF.param_group.conf, **CONF.opt.args)
-    scheduler = IterationScheduler(opt.optimizers[0],
-                                   dataset_size=len(train_set),
-                                   world_size=WORLD_SIZE,
-                                   total_iters=len(train_loader),
-                                   verbose=CONF.debug,
-                                   **CONF.schedule.args)
+    scheduler = IterationScheduler(opt.get_schedulers(),
+                                   CONF.schedule.opt_cfgs,
+                                   CONF.schedule.variable_cfgs,
+                                   iters_per_epoch=len(train_set) // WORLD_SIZE // CONF.BATCH_SIZE_PER_GPU,
+                                   quant_start_iter=CONF.schedule.quant_start_iter,
+                                   total_iters=len(train_loader))
 
     if CONF.dist:
         logger.debug(f"building DDP model...")
@@ -117,9 +116,9 @@ def main():
 
     if CONF.resume.path is not None:
         if CONF.resume.path == "latest":
-            resume_path = get_latest_file(CONF.ckpt.dir)
-        elif CONF.resume.path == "final":
-            resume_path = os.path.join(CONF.ckpt.dir, "ckpt_final.pth")
+            resume_path = os.path.join(CONF.ckpt.dir, "ckpt_latest.pth")
+        elif CONF.resume.path == "best":
+            resume_path = os.path.join(CONF.ckpt.dir, "ckpt_best.pth")
         else:
             resume_path = CONF.resume.path
         logger.debug(f"loading checkpoint at: {resume_path}...")
@@ -187,6 +186,7 @@ def main():
                 CONF.quant.calib.gamma,
                 CONF.quant.calib.update_bn,
             )
+        logger.info(f"BEST_ACCURACY in state_dict: {BEST_ACCURACY}")
         logger.info(f"[Step {scheduler.last_iter}]: evaluating...")
         evaluate(model, val_loader, enable_quant=CONF.eval.quant, use_ema_stat=CONF.eval.use_ema_stat, verbose=True)
         return
@@ -197,7 +197,7 @@ def main():
 def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_model=None):
     global BEST_ACCURACY
     logger = logging.getLogger(LOGGER_NAME)
-    checkpointer = Checkpointer(CONF.ckpt.dir)
+    checkpointer = Checkpointer(os.path.join(CONF.ckpt.dir, EXP_DATETIME), RANK)
     model_without_ddp = model.module if CONF.dist else model
     metric_logger = MetricLogger(TB_LOGGER, last_iter=scheduler.last_iter)
     metric_logger.add_meter("LR", SmoothedValue(fmt="{value:.4f}"))
@@ -206,7 +206,6 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
 
     for img, label in metric_logger.log_every(train_loader, CONF.log.freq,
                                               log_prefix="train", progress_bar=CONF.progress_bar):
-        scheduler.step()
         step = scheduler.last_iter
 
         if CONF.quant.calib.required_on_training and scheduler.do_calibration:
@@ -223,16 +222,8 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             if CONF.distil.zero_momentum:
                 logger.debug(f"clear optimizer momentum after calibration")
                 opt.zero_momentum()
-            checkpointer.save(
-                model=model_without_ddp.state_dict(),
-                opt=opt.state_dict(),
-                scheduler=scheduler.state_dict(),
-                accuracy=BEST_ACCURACY
-            )
-            checkpointer.write_to_disk("ckpt_calibrated.pth")
-            logger.info(f"calibrated checkpoint has been wrote to disk")
 
-        img = img.requires_grad_().to(DEVICE, non_blocking=True)
+        img = img.to(DEVICE, non_blocking=True).requires_grad_()
         label = label.to(DEVICE, non_blocking=True)
         logits = model(img, enable_fp=CONF.quant.enable_fp, enable_quant=scheduler.quant_enabled)
 
@@ -248,7 +239,10 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
         elif CONF.distil.mode == "inv_distil":
             hard_loss, soft_loss, ref_loss = criterion(*logits, label, teacher_logits)
             hard_w, soft_w, ref_w = scheduler.get_scheduled_variables("hard_w", "soft_w", "ref_w")
-            metric_logger.update(hard_w=hard_w, soft_w=soft_w, ref_w=ref_w)
+            metric_logger.update(
+                hard_w=hard_w, soft_w=soft_w, ref_w=ref_w,
+                hard_loss=hard_loss.item(), soft_loss=soft_loss.item(),
+            )
             loss = hard_loss * hard_w + soft_loss * soft_w + ref_loss * ref_w
         else:
             if scheduler.quant_enabled:
@@ -259,7 +253,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
 
         opt.zero_grad()
         loss.backward()
-        opt.step(scheduler.quant_enabled)
+        opt.step(step, scheduler.quant_enabled)
 
         (fp_top1, fp_top5), (q_top1, q_top5) = accuracy(logits, label, topk=CONF.loss.topk)
 
@@ -273,7 +267,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             loss=(loss.item(), n),
         )
 
-        if step % CONF.eval.freq == 0 or step == len(train_loader):  # step starts from 1
+        if (step > 0 and step % CONF.eval.freq == 0) or step == len(train_loader) - 1:
             logger.debug(f"evaluating at iteration {step}...")
             eval_fp_top1, eval_fp_top5, eval_q_top1, eval_q_top5 = evaluate(
                 model,
@@ -293,18 +287,21 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             if is_best:
                 BEST_ACCURACY = eval_q_top1 if scheduler.quant_enabled else eval_fp_top1
                 checkpointer.save(
+                    step=step,
+                    accuracy=BEST_ACCURACY,
                     model=model_without_ddp.state_dict(),
                     opt=opt.state_dict(),
                     scheduler=scheduler.state_dict(),
-                    accuracy=BEST_ACCURACY
                 )
             barrier()
 
-        if step % CONF.ckpt.freq == 0:
-            checkpointer.write_to_disk(f"ckpt_step_{step}.pth")
+        scheduler.step()
+
+        if step > 0 and step % CONF.ckpt.freq == 0:
+            checkpointer.write_to_disk()
             barrier()
 
-    checkpointer.write_to_disk(f"ckpt_final.pth")
+    checkpointer.write_to_disk()
     barrier()
 
 

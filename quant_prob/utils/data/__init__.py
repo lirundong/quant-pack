@@ -21,9 +21,9 @@ _train_transforms = {
     "CIFAR10": transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
-        Cutout(16, 1, False),
         transforms.ToTensor(),
         _normalize_rgb,
+        Cutout(16, 1, False),
     ]),
     "ImageNetST": transforms.Compose([
         transforms.RandomResizedCrop(224),

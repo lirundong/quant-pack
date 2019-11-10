@@ -1,0 +1,52 @@
+__BASE__: configs/CIFAR10/GQ-Nets/vgg7_2bits.yaml
+BATCH_SIZE_PER_GPU: &bs 128
+
+## Dataset
+data:
+  dataset:
+    args:
+      root: /home/lirundong/HDD1/Datasets/CIFAR
+      download: true
+  train_loader_conf:
+    batch_size: *bs
+  train_sampler_conf:
+    batch_size: *bs
+  val_loader_conf:
+    batch_size: *bs
+
+## Optimization
+param_group:
+  conf:
+    - type: Adam
+      args: &weight_group
+        lr: !!float 4e-4
+        weight_decay: !!float 1e-4
+      schedules:
+        - name: &weight_lr_schedule1 weight_lr_annealing
+          type: CosineAnnealingLR
+          args:
+            T_max: 50782 # number of iterations of final 130 epochs with 128 batch size
+    - type: Adam
+      args: &quant_param_group
+        lr: !!float 1e-4
+        weight_decay: 0.0
+  groups:
+    - <<: *weight_group
+    - <<: *quant_param_group
+  args:
+    ft_layers: null
+opt:
+  args:
+    alter_step: null  # jointly optimize W and Theta
+schedule:
+  opt_cfgs:
+    - [*weight_lr_schedule1, 170, -1, "epoch"]
+
+## Resume and snapshot
+ckpt:
+  dir: /home/lirundong/HDD1/quant-prob/cifar10/vgg7/2bits_small_anneal_lr_joint/checkpoints/
+
+## Logging and diagnose
+log:
+  tb_dir: /home/lirundong/HDD1/quant-prob/cifar10/vgg7/2bits_small_anneal_lr_joint/tb_logs/
+  file: /home/lirundong/HDD1/quant-prob/cifar10/vgg7/2bits_small_anneal_lr_joint/train
