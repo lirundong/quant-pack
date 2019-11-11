@@ -8,6 +8,7 @@ from datetime import datetime
 from pprint import pformat
 
 import yaml
+import colorama
 import torch
 import torch.multiprocessing as mp
 import numpy as np
@@ -21,7 +22,6 @@ from tqdm import tqdm
 from quant_prob import modeling
 from quant_prob.utils import *
 
-BEST_ACCURACY = 0.
 EXP_DATETIME = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 CONF = None
 DEVICE = None
@@ -33,7 +33,7 @@ SEED = 19260817
 
 
 def main():
-    global BEST_ACCURACY, CONF, DEVICE, TB_LOGGER, RANK, WORLD_SIZE
+    global CONF, DEVICE, TB_LOGGER, RANK, WORLD_SIZE
 
     parser = ArgumentParser(f"Probabilistic quantization neural networks.")
     parser.add_argument("--conf-path", "-c", required=True, help="path of configuration file")
@@ -99,7 +99,8 @@ def main():
                                    CONF.schedule.variable_cfgs,
                                    iters_per_epoch=len(train_set) // WORLD_SIZE // CONF.BATCH_SIZE_PER_GPU,
                                    quant_start_iter=CONF.schedule.quant_start_iter,
-                                   total_iters=len(train_loader))
+                                   total_iters=len(train_loader),
+                                   dynamic_variable_scale=CONF.schedule.dynamic_variable_scale)
 
     if CONF.dist:
         logger.debug(f"building DDP model...")
@@ -129,11 +130,11 @@ def main():
                 model_without_ddp.load_state_dict(model_dict, strict=False)
             except RuntimeError as e:
                 logger.warning(e)
+            logger.debug(f"accuracy in state_dict: {ckpt['accuracy']}")
             if CONF.resume.load_opt:
                 logger.debug(f"recovering optimizer...")
                 opt.load_state_dict(ckpt["opt"])
             if CONF.resume.load_scheduler:
-                BEST_ACCURACY = ckpt["accuracy"]
                 scheduler.load_state_dict(ckpt["scheduler"])
                 train_loader.sampler.set_last_iter(scheduler.last_iter)
                 logger.debug(f"recovered opt at iteration: {scheduler.last_iter}")
@@ -186,7 +187,6 @@ def main():
                 CONF.quant.calib.gamma,
                 CONF.quant.calib.update_bn,
             )
-        logger.info(f"BEST_ACCURACY in state_dict: {BEST_ACCURACY}")
         logger.info(f"[Step {scheduler.last_iter}]: evaluating...")
         evaluate(model, val_loader, enable_quant=CONF.eval.quant, use_ema_stat=CONF.eval.use_ema_stat, verbose=True)
         return
@@ -195,7 +195,6 @@ def main():
 
 
 def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_model=None):
-    global BEST_ACCURACY
     logger = logging.getLogger(LOGGER_NAME)
     checkpointer = Checkpointer(CONF.ckpt.dir, RANK)
     model_without_ddp = model.module if CONF.dist else model
@@ -206,8 +205,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
 
     for img, label in metric_logger.log_every(train_loader, CONF.log.freq,
                                               log_prefix="train", progress_bar=CONF.progress_bar):
-        step = scheduler.last_iter
-
+        step = scheduler.last_iter  # from PyTorch-1.1, step starts from 0
         if CONF.quant.calib.required_on_training and scheduler.do_calibration:
             logger.info(f"resetting quantization ranges at iteration {scheduler.last_iter}...")
             update_quant_func = model_without_ddp.update_ddp_quant_param if CONF.dist else \
@@ -238,7 +236,10 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             loss = soft_loss + hard_loss
         elif CONF.distil.mode == "inv_distil":
             hard_loss, soft_loss, ref_loss = criterion(*logits, label, teacher_logits)
-            hard_w, soft_w, ref_w = scheduler.get_scheduled_variables("hard_w", "soft_w", "ref_w")
+            hard_w, soft_w, ref_w = scheduler.get_scheduled_variables(
+                "hard_w", "soft_w", "ref_w",  # name of scheduled variables
+                hard_loss=hard_loss.item(), soft_loss=soft_loss.item(), ref_loss=ref_loss.item(),  # reference values
+            )
             metric_logger.update(
                 hard_w=hard_w, soft_w=soft_w, ref_w=ref_w,
                 hard_loss=hard_loss.item(), soft_loss=soft_loss.item(),
@@ -283,23 +284,21 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
                 eval_q_top5=eval_q_top5,
             )
 
-            is_best = eval_q_top1 > BEST_ACCURACY if scheduler.quant_enabled else eval_fp_top1 > BEST_ACCURACY
-            if is_best:
-                BEST_ACCURACY = eval_q_top1 if scheduler.quant_enabled else eval_fp_top1
-                checkpointer.save(
-                    step=step,
-                    accuracy=BEST_ACCURACY,
-                    model=model_without_ddp.state_dict(),
-                    opt=opt.state_dict(),
-                    scheduler=scheduler.state_dict(),
-                )
+            acc = eval_q_top1 if scheduler.quant_enabled else eval_fp_top1
+            checkpointer.save(
+                step=step,
+                acc=acc,
+                model=model_without_ddp.state_dict(),
+                opt=opt.state_dict(),
+                scheduler=scheduler.state_dict(),
+            )
             barrier()
-
-        scheduler.step()
 
         if step > 0 and step % CONF.ckpt.freq == 0:
             checkpointer.write_to_disk()
             barrier()
+
+        scheduler.step()
 
     checkpointer.write_to_disk()
     barrier()
@@ -349,4 +348,6 @@ if __name__ == "__main__":
     if mp.get_start_method(allow_none=True) != "forkserver":
         mp.set_start_method("forkserver")
 
+    colorama.init()
     main()
+    print(colorama.Style.RESET_ALL)

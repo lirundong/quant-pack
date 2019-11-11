@@ -3,10 +3,6 @@ BATCH_SIZE_PER_GPU: &bs 128
 
 ## Dataset
 data:
-  dataset:
-    args:
-      root: /home/lirundong/HDD1/Datasets/CIFAR
-      download: true
   train_loader_conf:
     batch_size: *bs
   train_sampler_conf:
@@ -39,14 +35,18 @@ opt:
   args:
     alter_step: null  # jointly optimize W and Theta
 schedule:
+  variable_cfgs:
+    - ["soft_w", "soft_loss"]
+    - ["hard_w", "hard_loss"]
+    - ["ref_w", 0]
   opt_cfgs:
-    - [*weight_lr_schedule1, 170, -1, "iter"]
+    - [*weight_lr_schedule1, 170, 300, "iter"]
 
 ## Resume and snapshot
 ckpt:
-  dir: /home/lirundong/HDD1/quant-prob/cifar10/vgg7/2bits_small_anneal_lr_joint/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits_small_lr_dynamic_weight/checkpoints/
 
 ## Logging and diagnose
 log:
-  tb_dir: /home/lirundong/HDD1/quant-prob/cifar10/vgg7/2bits_small_anneal_lr_joint/tb_logs/
-  file: /home/lirundong/HDD1/quant-prob/cifar10/vgg7/2bits_small_anneal_lr_joint/train
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits_small_lr_dynamic_weight/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits_small_lr_dynamic_weight/train

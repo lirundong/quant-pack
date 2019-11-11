@@ -8,6 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 from deepmerge import Merger
 
+import colorama
 import torch
 import yaml
 
@@ -110,23 +111,24 @@ class Checkpointer:
 
     @staticmethod
     def _handle_sigint(self, sig, frame):
-        print(f"\nwaite a minute, writing checkpoints to disk...", flush=True)
+        print(colorama.Fore.YELLOW + f"\nWaite a minute, writing checkpoints to disk...", flush=True)
         self.write_to_disk()
-        print(f"checkpoints have been writen to {self.ckpt_dir}", flush=True)
+        print(colorama.Fore.GREEN + f"Checkpoints have been writen to: {self.ckpt_dir}", flush=True)
+        print(colorama.Style.RESET_ALL, flush=True)
         exit(0)
 
-    def save(self, step, accuracy, **kwargs):
+    def save(self, step, acc, **kwargs):
         if not self.is_master:
             return
         f = BytesIO()
         torch.save({
             "step": step,
-            "accuracy": accuracy,
+            "accuracy": acc,
             **kwargs,
         }, f)
         self.latest_ckpt = f
-        if accuracy > self.best_acc:
-            self.best_acc = accuracy
+        if acc > self.best_acc:
+            self.best_acc = acc
             self.best_ckpt = f
 
     def write_to_disk(self):

@@ -20,9 +20,9 @@ ScheduledVariableCfg = collections.namedtuple(
 
 class IterationScheduler:
     # TODO:
-    #  1. use torch.opt schedulers to adjust learning rate, get rid of the ad-hoc.
-    #     Note that from pytorch-1.1, schedulers starts from `last_epoch=0`
-    #  2. type-hinting
+    #  1. type-hinting
+    #  2. currently all start/end/terminate_iters are actually passed by epochs,
+    #     modify the semantic to make config more clear
 
     def __init__(self,
                  named_opt_schedulers,
@@ -30,12 +30,14 @@ class IterationScheduler:
                  scheduled_variable_cfgs,
                  iters_per_epoch,
                  quant_start_iter,
-                 total_iters):
+                 total_iters,
+                 dynamic_variable_scale=1.0):
 
         self.opt_schedulers = collections.OrderedDict(named_opt_schedulers)
         self.iters_per_epoch = iters_per_epoch
         self.quant_start_iter = quant_start_iter
         self.total_iters = total_iters
+        self.dynamic_variable_scale = dynamic_variable_scale
 
         self._add_scheduled_opt_cfgs(*scheduled_opt_cfgs)
         self._add_scheduled_variable_cfgs(*scheduled_variable_cfgs)
@@ -59,11 +61,11 @@ class IterationScheduler:
             assert opt_cfg[3] == "iter" or opt_cfg[3] == "epoch"
             if isinstance(opt_cfg, tuple):
                 opt_cfg = list(opt_cfg)
-            if opt_cfg[3] == "epoch":
-                opt_cfg[1] *= self.iters_per_epoch
-                if opt_cfg[2] != -1:
-                    opt_cfg[2] *= self.iters_per_epoch
-            if opt_cfg[2] == -1:
+            # TODO: make this config semantic more clear
+            opt_cfg[1] *= self.iters_per_epoch
+            if opt_cfg[2] != -1:
+                opt_cfg[2] *= self.iters_per_epoch
+            else:
                 # this schedule terminates at training ending
                 opt_cfg[2] = self.total_iters + 1
             try:
@@ -187,7 +189,7 @@ class IterationScheduler:
             # dynamically scaling by other reference variables
             var_ref_val = ref_vals[self.dynamic_scaling_variables[var_name]]
             total_ref_val = sum(ref_vals[ref_name] for ref_name in self.scaling_reference_names)
-            return var_ref_val / total_ref_val
+            return var_ref_val / total_ref_val * self.dynamic_variable_scale
 
         else:
             raise ValueError(f"unregistered variable name `{var_name}`")
