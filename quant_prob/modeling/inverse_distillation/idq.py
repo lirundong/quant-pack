@@ -418,6 +418,18 @@ class IDQ:
         return act_bank
 
     def get_param_group(self, weight_conf, quant_param_conf, ft_layers=None):
+
+        def _check_and_scale_lr(_conf):
+            if _conf.get("scale_lr_by_world_size", False):
+                _conf.pop("scale_lr_by_world_size")
+                if dist.is_available() and dist.is_initialized():
+                    world_size = dist.get_world_size()
+                else:
+                    world_size = 1
+                _conf["lr"] *= world_size
+
+        _check_and_scale_lr(weight_conf)
+        _check_and_scale_lr(quant_param_conf)
         weight_group = copy(weight_conf)
         quant_param_group = copy(quant_param_conf)
         weight_group["params"] = []

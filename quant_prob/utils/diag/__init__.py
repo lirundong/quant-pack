@@ -2,8 +2,9 @@
 
 from . import diagnoser as _diagnoser
 from ._registry import get_tasks
+from .grad_conflict import get_grad_analysis
 
-__all__ = ["get_diagnoser", "get_tasks"]
+__all__ = ["get_diagnoser", "get_tasks", "get_grad_analysis"]
 
 
 def get_diagnoser(diagnoser_type, module, *diagnoser_args, **diagnoser_kwargs):

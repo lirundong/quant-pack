@@ -73,6 +73,7 @@ class SmoothedValue(object):
 
     def update(self, value, n=1):
         if torch.is_tensor(value):
+            assert value.numel() == 1
             value = value.item()
         self.deque.append(value)
         if self.track_global_stat:

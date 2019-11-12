@@ -66,6 +66,7 @@ def main():
 
     logger = init_log(LOGGER_NAME, CONF.debug, f"{CONF.log.file}_{EXP_DATETIME}.log")
 
+    np.random.seed(SEED)
     torch.manual_seed(SEED)
     torch.backends.cudnn.benchmark = True
 
@@ -188,7 +189,7 @@ def main():
                 CONF.quant.calib.update_bn,
             )
         logger.info(f"[Step {scheduler.last_iter}]: evaluating...")
-        evaluate(model, val_loader, enable_quant=CONF.eval.quant, use_ema_stat=CONF.eval.use_ema_stat, verbose=True)
+        evaluate(model, val_loader, enable_quant=CONF.eval.quant, verbose=True)
         return
 
     train(model, criterion, train_loader, val_loader, opt, scheduler, teacher)
@@ -224,7 +225,6 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
         img = img.to(DEVICE, non_blocking=True).requires_grad_()
         label = label.to(DEVICE, non_blocking=True)
         logits = model(img, enable_fp=CONF.quant.enable_fp, enable_quant=scheduler.quant_enabled)
-
         if teacher_model is not None:
             with torch.no_grad():
                 teacher_logits = teacher_model(img)
@@ -235,16 +235,23 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             hard_loss, soft_loss = criterion(logits, teacher_logits, label)
             loss = soft_loss + hard_loss
         elif CONF.distil.mode == "inv_distil":
+            ref_values = {}
             hard_loss, soft_loss, ref_loss = criterion(*logits, label, teacher_logits)
-            hard_w, soft_w, ref_w = scheduler.get_scheduled_variables(
-                "hard_w", "soft_w", "ref_w",  # name of scheduled variables
-                hard_loss=hard_loss.item(), soft_loss=soft_loss.item(), ref_loss=ref_loss.item(),  # reference values
-            )
-            metric_logger.update(
-                hard_w=hard_w, soft_w=soft_w, ref_w=ref_w,
-                hard_loss=hard_loss.item(), soft_loss=soft_loss.item(),
-            )
-            loss = hard_loss * hard_w + soft_loss * soft_w + ref_loss * ref_w
+            if CONF.diagnose.enabled:
+                conflict_coeff, hard_grad_norm, soft_grad_norm = \
+                    get_grad_analysis(model, hard_loss, soft_loss)
+                ref_values.update(
+                    conflict_coeff=conflict_coeff,
+                    hard_grad_norm=hard_grad_norm,
+                    soft_grad_norm=soft_grad_norm,
+                )
+            ref_values.update(hard_loss=hard_loss.item(), soft_loss=soft_loss.item(), ref_loss=ref_loss.item())
+            hard_w, soft_w, ref_w = scheduler.get_scheduled_variables("hard_w", "soft_w", "ref_w", **ref_values)
+            hard_loss = hard_loss * hard_w
+            soft_loss = soft_loss * soft_w
+            ref_loss = ref_loss * ref_w
+            loss = hard_loss + soft_loss + ref_loss
+            metric_logger.update(hard_w=hard_w, soft_w=soft_w, ref_w=ref_w, **ref_values)
         else:
             if scheduler.quant_enabled:
                 logit = logits[1]
@@ -265,7 +272,7 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
             train_q_top1=(q_top1, n),
             train_q_top5=(q_top5, n),
             LR=opt.get_lr()[0],
-            loss=(loss.item(), n),
+            loss=(loss, n),
         )
 
         if (step > 0 and step % CONF.eval.freq == 0) or step == len(train_loader) - 1:
@@ -305,10 +312,9 @@ def train(model, criterion, train_loader, val_loader, opt, scheduler, teacher_mo
 
 
 @torch.no_grad()
-def evaluate(model, loader, enable_fp=True, enable_quant=True, verbose=False, progress_bar=True, use_ema_stat=True):
-    if use_ema_stat:
-        model.eval()
+def evaluate(model, loader, enable_fp=True, enable_quant=True, verbose=False, progress_bar=True):
     metric_logger = MetricLogger(track_global_stat=True)
+    model.eval()
 
     if progress_bar:
         loader = tqdm(loader, f"[RANK {RANK:2d}]")

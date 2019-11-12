@@ -19,7 +19,7 @@ class HybridOpt(object):
     def _eval_lambda_literals(cls, cfg: dict):
 
         def _is_lambda_literal(literal):
-            return isinstance(literal, str) and literal.startswith("lambda")
+            return isinstance(literal, str) and literal.startswith("lambda ")
 
         def _check_and_convert_iterable(iterable):
             if isinstance(iterable, tuple):

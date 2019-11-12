@@ -1,0 +1,14 @@
+__BASE__: configs/CIFAR10/GQ-Nets/resnet18_2bits.yaml
+
+data:
+  dataset:
+    args:
+      root: /home/lirundong/HDD1/Datasets/CIFAR
+      download: true
+ckpt:
+  dir: /home/lirundong/HDD1/quant-prob/cifar10/resnet18/2bits/checkpoints/
+
+## Logging and diagnose
+log:
+  tb_dir: /home/lirundong/HDD1/quant-prob/cifar10/resnet18/2bits/tb_logs/
+  file: /home/lirundong/HDD1/quant-prob/cifar10/resnet18/2bits/train

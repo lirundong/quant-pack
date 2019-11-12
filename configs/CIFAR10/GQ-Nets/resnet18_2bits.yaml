@@ -1,4 +1,4 @@
-BATCH_SIZE_PER_GPU: &bs 256
+BATCH_SIZE_PER_GPU: &bs 100
 TOTAL_EPOCHS: &e 300
 
 ## Dataset
@@ -23,12 +23,13 @@ data:
 
 ## Models
 arch:
-  type: cifar10_vgg7_idq
+  type: resnet18_idq
   args:
     kw: 2
     ka: 2
     align_zero: false
     use_multi_domain: true
+    num_classes: 10
   gpu_per_model: 1
 teacher_arch: null
 
@@ -47,10 +48,15 @@ param_group:
     - type: Adam
       args: &weight_group
         lr: !!float 1e-3
-        weight_decay: !!float 1e-4
+        weight_decay: 0.0
+      schedules:
+        - name: &weight_lr_schedule1 weight_lr_annealing
+          type: CosineAnnealingLR
+          args:
+            T_max: 25000 # number of iterations of final 50 epochs with 100 batch size
     - type: Adam
       args: &quant_param_group
-        lr: !!float 1e-3
+        lr: !!float 1e-4
         weight_decay: 0.0
   groups:
     - <<: *weight_group
@@ -59,15 +65,16 @@ param_group:
     ft_layers: null
 opt:
   args:
-    alter_step: 1
+    alter_step: null  # jointly optimize W and Theta
 schedule:
   quant_start_iter: 0
   dynamic_variable_scale: 1.0
-  opt_cfgs: []
   variable_cfgs:
-    - ["soft_w", 0.5]
-    - ["hard_w", 0.5]
-    - ["ref_w", 0.5]
+    - ["soft_w", 1.0]
+    - ["hard_w", 1.0]
+    - ["ref_w", 0.0]
+  opt_cfgs:
+    - [*weight_lr_schedule1, 250, -1, "iter"]
 
 ## Evaluation
 eval:
@@ -79,7 +86,7 @@ eval:
 ## Resume and snapshot
 ckpt:
   freq: 1000000
-  dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10/resnet18/2bits/checkpoints/
 resume:
   path: null
   load_opt: true
@@ -88,8 +95,8 @@ resume:
 ## Logging and diagnose
 log:
   freq: 500
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits/tb_logs/
-  file: /mnt/lustre/lirundong/Data/quant-prob/cifar10/vgg7/2bits/train
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/cifar10/resnet18/2bits/tb_logs/
+  file: /mnt/lustre/lirundong/Data/quant-prob/cifar10/resnet18/2bits/train
 diagnose:
   enabled: false
   diagnoser:
@@ -98,7 +105,7 @@ diagnose:
   tasks: []
 
 ## Misc
-comment: "2bits_vgg7"
+comment: "2bits_resnet18"
 progress_bar: false
 quant:
   enable_fp: true

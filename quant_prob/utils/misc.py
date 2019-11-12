@@ -6,11 +6,11 @@ from io import BytesIO
 from glob import glob
 from datetime import timedelta
 from pathlib import Path
-from deepmerge import Merger
 
 import colorama
 import torch
 import yaml
+from deepmerge import Merger
 
 __all__ = ["accuracy", "get_eta", "get_latest_file", "update_config", "Checkpointer"]
 
@@ -108,6 +108,7 @@ class Checkpointer:
         os.makedirs(ckpt_dir, exist_ok=True)
         # bind `self` to `_handle_sigint`
         signal.signal(signal.SIGINT, lambda sig, frame: Checkpointer._handle_sigint(self, sig, frame))
+        signal.signal(signal.SIGTERM, lambda sig, frame: Checkpointer._handle_sigint(self, sig, frame))
 
     @staticmethod
     def _handle_sigint(self, sig, frame):

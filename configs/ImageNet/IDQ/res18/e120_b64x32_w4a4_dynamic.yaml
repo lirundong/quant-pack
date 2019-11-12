@@ -1,0 +1,60 @@
+__BASE__: configs/ImageNet/IDQ/res18_e120_b64x32_vanilla.yaml
+
+arch:
+  args:
+    use_multi_domain: true
+
+loss:
+  args:
+    detach_ref: true
+
+opt:
+  args:
+    alter_step: 1
+
+param_group:
+  conf:
+    - type: SGD
+      args: &sgd_args
+        lr: 0.025
+        momentum: 0.9
+        weight_decay: !!float 1e-4
+        nesterov: true
+      schedules:
+        - name: &weight_warmup weight_warmup
+          type: LambdaLR
+          args:
+            # linear scaling in beginning 4 epochs, b64x32
+            lr_lambda: "lambda step: 0.25 + 0.75 * step / (1281167 / 64 / 32 * 4)"
+        - name: &weight_decay weight_decay
+          type: MultiStepLR
+          args:
+            milestones: [60, 90]
+            gamma: 0.1
+    - type: Adam
+      args: &adam_args
+        lr: 0.001
+        weight_decay: 0.0
+  groups:
+    - <<: *sgd_args
+      scale_lr_by_world_size: true
+    - <<: *adam_args
+  args:
+    ft_layers: null
+schedule:
+  quant_start_iter: 0
+  dynamic_variable_scale: 1.0
+  variable_cfgs:
+    - ["soft_w", "soft_loss"]
+    - ["hard_w", "hard_loss"]
+    - ["ref_w", 0.0]
+  opt_cfgs:
+    - [*weight_warmup, 0, 4, "iter"]
+    - [*weight_decay, 0, -1, "epoch"]
+
+ckpt:
+  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/GQ_w4a4_dynamic_weight/checkpoints/
+
+log:
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/GQ_w4a4_dynamic_weight/tb_logs
+  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/GQ_w4a4_dynamic_weight/train

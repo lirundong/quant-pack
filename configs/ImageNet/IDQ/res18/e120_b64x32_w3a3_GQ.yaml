@@ -1,0 +1,35 @@
+__BASE__: configs/ImageNet/IDQ/res18_e120_b64x32_vanilla.yaml
+
+arch:
+  args:
+    kw: 3
+    ka: 3
+    use_multi_domain: true
+
+loss:
+  args:
+    detach_ref: true
+
+opt:
+  args:
+    alter_step: 1
+
+schedule:
+  args:
+    enable_quant_at: segmented
+    scheduled_variables:
+      # fields: name, init_value, target_value, warmup_start_epoch, warmup_done_epoch, terminate_epoch=-1
+      # warmup_{...}_epoch is the index of `schedule.milestones`, setup to null means do not tune it
+      # multiple schedule for one variable is acceptable, which will thus be segmented by `terminate_epoch`s
+      - ["soft_w", 0.0, 1.0, 10, 15, 60]
+      - ["soft_w", 0.0, 1.0, 65, 70, 90]
+      - ["soft_w", 0.0, 1.0, 95, 100, -1]
+      - ["hard_w", 1.0, 1.0, null, null, -1]
+      - ["ref_w", 1.0, 1.0, null, null, -1]
+
+ckpt:
+  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/GQ_e120_b64x32_w3a3/checkpoints/
+
+log:
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/GQ_e120_b64x32_w3a3/tb_logs
+  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/GQ_e120_b64x32_w3a3/train
