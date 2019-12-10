@@ -1,9 +1,12 @@
 __BASE__: configs/ImageNet/IDQ/res18_e120_b64x32_vanilla.yaml
 
-arch:
-  args:
-    kw: 5
-    ka: 5
+data:
+  dataset:
+    args:
+      img_dir: /home/lirundong/HDD1/Datasets/imgnet/
+      meta_dir: /home/lirundong/HDD1/Datasets/imgnet/meta/
+  val_loader_conf:
+    shuffle: true
 
 param_group:
   conf:
@@ -45,9 +48,17 @@ schedule:
     - [*weight_warmup, 0, 4, "iter"]
     - [*weight_decay, 0, -1, "epoch"]
 
+resume:
+  path: /home/lirundong/HDD1/Models/IDQ/resnet18_w4a4_vanilla/ckpt_final.pth
+  load_opt: false
+  load_scheduler: false
+
 ckpt:
-  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/e120_b64x32_w5a5_vanilla/checkpoints/
+  dir: /home/lirundong/HDD1/quant-prob/imgnet/res18/e120_b64x32_w4a4_vanilla/checkpoints/
 
 log:
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/e120_b64x32_w5a5_vanilla/tb_logs
-  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/e120_b64x32_w5a5_vanilla/train
+  tb_dir: /home/lirundong/HDD1/quant-prob/imgnet/res18/e120_b64x32_w4a4_vanilla/tb_logs
+  file: /home/lirundong/HDD1/quant-prob/imgnet/res18/e120_b64x32_w4a4_vanilla/train
+
+vis_path: /home/lirundong/HDD1/quant-prob/imgnet/res18/e120_b64x32_w4a4_vanilla/pre_acts/all_layers.npz
+vis_names: []

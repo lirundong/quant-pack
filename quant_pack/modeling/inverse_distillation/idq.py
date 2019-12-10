@@ -12,13 +12,13 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Parameter
-from torch.nn.modules._functions import SyncBatchNorm as sync_batch_norm
 from torch.utils.checkpoint import checkpoint
 
 if torch.cuda.is_available():
-    from quant_prob.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant as quantizer
+    from quant_pack.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant as quantizer
 else:
-    from quant_prob.modeling.quantizers.param_linear_quantizer import fake_linear_quant as quantizer
+    from quant_pack.modeling.quantizers.param_linear_quantizer import fake_linear_quant as quantizer
+from ._bn_utils import _reinit_multi_domain
 
 __all__ = ["IDQ"]
 
@@ -84,98 +84,6 @@ class IDQ:
                 self.weight_quant_param[f"{n}_weight_ub".replace(".", "_")] = ub
                 self.activation_quant_param[f"{n}_act_lb".replace(".", "_")] = Parameter(torch.tensor(0.))
                 self.activation_quant_param[f"{n}_act_ub".replace(".", "_")] = Parameter(torch.tensor(0.))
-
-    def reinit_multi_domain(self):
-        if not self.use_multi_domain:
-            return
-
-        def _get_running_stat(module):
-            if self.use_multi_domain and self.in_quant_mode:
-                running_mean = module.running_mean_q
-                running_var = module.running_var_q
-                num_batches_tracked = module.num_batches_tracked_q
-            else:
-                running_mean = module.running_mean
-                running_var = module.running_var
-                num_batches_tracked = module.num_batches_tracked
-            return running_mean, running_var, num_batches_tracked
-
-        def _check_input_dim(x):
-            if x.dim() <= 2:
-                raise ValueError(f'expected at least 3D input (got {x.dim()}D input)')
-
-        def _multi_domain_bn_forward(module, x):
-            _check_input_dim(x)
-            running_mean, running_var, num_batches_tracked = module.get_running_stat()
-
-            if module.momentum is None:
-                exponential_average_factor = 0.0
-            else:
-                exponential_average_factor = module.momentum
-
-            if module.training and module.track_running_stats:
-                num_batches_tracked.add_(1)
-                if module.momentum is None:  # use cumulative moving average
-                    exponential_average_factor = 1.0 / num_batches_tracked.item()
-                else:  # use exponential moving average
-                    exponential_average_factor = module.momentum
-
-            return F.batch_norm(x, running_mean, running_var, module.weight, module.bias,
-                                module.training or not module.track_running_stats,
-                                exponential_average_factor, module.eps)
-
-        def _multi_domain_sync_bn_forward(module, x):
-            if not x.is_cuda:
-                raise ValueError('expected x tensor to be on GPU')
-
-            if not module.ddp_gpu_size:
-                raise AttributeError('SyncBatchNorm is only supported within torch.nn.parallel.DistributedDataParallel')
-
-            _check_input_dim(x)
-
-            exponential_average_factor = 0.0
-            running_mean, running_var, num_batches_tracked = module.get_running_stat()
-
-            if module.training and module.track_running_stats:
-                num_batches_tracked.add_(1)
-                if module.momentum is None:  # use cumulative moving average
-                    exponential_average_factor = 1.0 / num_batches_tracked.item()
-                else:  # use exponential moving average
-                    exponential_average_factor = module.momentum
-
-            world_size = 1
-            process_group = torch.distributed.group.WORLD
-            if module.process_group:
-                process_group = module.process_group
-            world_size = torch.distributed.get_world_size(process_group)
-
-            # fallback to framework BN when synchronization is not necessary
-            if world_size == 1 or (not module.training and module.track_running_stats):
-                return F.batch_norm(x, running_mean, running_var, module.weight, module.bias,
-                                    module.training or not module.track_running_stats,
-                                    exponential_average_factor, module.eps)
-            else:
-                return sync_batch_norm.apply(
-                    x, module.weight, module.bias, running_mean, running_var,
-                    module.eps, exponential_average_factor, process_group, world_size)
-
-        for m in self.modules():
-            if isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
-                assert m._version == 2, f"deprecated batchnorm implementation, " \
-                                        f"please switch to pytorch>=1.1"
-                device = next(m.buffers()).device
-                if not hasattr(m, "running_mean_q"):
-                    m.register_buffer("running_mean_q", torch.zeros(m.num_features, device=device))
-                if not hasattr(m, "running_var_q"):
-                    m.register_buffer("running_var_q", torch.ones(m.num_features, device=device))
-                if not hasattr(m, "num_batches_tracked_q"):
-                    m.register_buffer("num_batches_tracked_q", torch.tensor(0, dtype=torch.long, device=device))
-
-                m.get_running_stat = MethodType(_get_running_stat, m)
-                if isinstance(m, nn.BatchNorm2d):
-                    m.forward = MethodType(_multi_domain_bn_forward, m)
-                elif isinstance(m, nn.SyncBatchNorm):
-                    m.forward = MethodType(_multi_domain_sync_bn_forward, m)
 
     def _update_stat(self, input, name, percentile, param_bank):
         assert torch.is_tensor(input)
@@ -356,6 +264,8 @@ class IDQ:
 
         return _decorate
 
+    reinit_multi_domain = _reinit_multi_domain
+
     @torch.no_grad()
     def update_quant_param(self, model, calibration_loader, calibration_steps, gamma=0.999, update_bn=False):
         self._update_weight_quant_param()
@@ -401,16 +311,18 @@ class IDQ:
             assert isinstance(m, (nn.Conv2d, nn.Linear))
             subfix = "_q" if self.in_quant_mode else "_fp"
             m_name = self.layer_names[id(m)] + subfix
-            y_data = y.detach().cpu().numpy()
+            y_data = y.detach().clone().cpu().numpy()
             act_bank[m_name] = y_data
 
         for n, m in self.named_modules():
-            if any(k in n for k in names) and isinstance(m, (nn.Conv2d, nn.Linear)):
+            if (len(names) == 0 or any(k in n for k in names)) \
+                    and isinstance(m, (nn.Conv2d, nn.Linear)):
                 h = m.register_forward_hook(save_activation_hook)
                 handles.append(h)
 
+        device = next(iter(self.parameters())).device
         img, label = next(iter(loader))
-        _ = self(img.cuda(), enable_quant=True)
+        _ = self(img.to(device), enable_quant=True)
 
         for h in handles:
             h.remove()

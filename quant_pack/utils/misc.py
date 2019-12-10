@@ -68,7 +68,7 @@ def update_config(conf: dict, extra: dict) -> dict:
         base_path = conf["__BASE__"]
         conf.pop("__BASE__")
         if not os.path.exists(base_path):
-            # __file__: quant-prob/quant_prob/utils/misc.py
+            # __file__: quant-prob/quant_pack/utils/misc.py
             project_root = Path(__file__).absolute().parents[2]
             base_path = os.path.join(project_root, base_path)
         base_conf = yaml.load(open(base_path, "r", encoding="utf-8"),

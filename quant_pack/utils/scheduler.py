@@ -165,15 +165,15 @@ class IterationScheduler:
             scheduler_states[k] = scheduler_state
         self_states = collections.OrderedDict()
         self_states.update({k: v for k, v in self.__dict__.items() if
-                            (not k.startswith("__") and k != "scheduled_opts")})
-        self_states["scheduled_opts"] = scheduler_states
+                            (not k.startswith("__") and k != "opt_schedulers")})
+        self_states["opt_schedulers"] = scheduler_states
         return self_states
 
     def load_state_dict(self, state_dict):
-        scheduler_states = state_dict["scheduled_opts"]
+        scheduler_states = state_dict["opt_schedulers"]
         for k, v in self.opt_schedulers.items():
             v.load_state_dict(scheduler_states[k])
-        state_dict.pop("scheduled_opts")
+        state_dict.pop("opt_schedulers")
         self.__dict__.update(state_dict)
 
     def _get_variable_state(self, var_name, **ref_vals):

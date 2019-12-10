@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import torch
-from quant_prob.extensions import _C
+from quant_pack.extensions import _C
 
 __all__ = ["ext"]
 

@@ -19,8 +19,8 @@ from torch.utils.tensorboard import SummaryWriter
 from easydict import EasyDict
 from tqdm import tqdm
 
-from quant_prob import modeling
-from quant_prob.utils import *
+from quant_pack import modeling
+from quant_pack.utils import *
 
 EXP_DATETIME = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 CONF = None
@@ -39,8 +39,8 @@ def main():
     parser.add_argument("--conf-path", "-c", required=True, help="path of configuration file")
     parser.add_argument("--port", "-p", type=int, help="port of distributed backend")
     parser.add_argument("--solo", "-s", action="store_true", help="run this script in solo (local machine) mode")
-    parser.add_argument("--evaluate_only", "-e", action="store_true", help="evaluate trained model")
-    parser.add_argument("--vis_only", "-v", action="store_true", help="visualize trained activations")
+    parser.add_argument("--evaluate-only", "-e", action="store_true", help="evaluate trained model")
+    parser.add_argument("--vis-only", "-v", action="store_true", help="visualize trained activations")
     parser.add_argument("--extra", "-x", type=json.loads, help="extra configurations in json format")
     parser.add_argument("--comment", "-m", default="", help="comment for each experiment")
     parser.add_argument("--debug", action="store_true", help="logging debug info")
@@ -90,7 +90,7 @@ def main():
     model = modeling.__dict__[CONF.arch.type](**CONF.arch.args).to(DEVICE, non_blocking=True)
     if CONF.dist and CONF.arch.sync_bn:
         model = SyncBatchNorm.convert_sync_batchnorm(model)
-        model.reinit_multi_domain()
+        model._reinit_multi_domain()
     logger.debug(f"build model {model.__class__.__name__} done:\n{model}")
 
     param_groups = model.get_param_group(*CONF.param_group.groups, **CONF.param_group.args)
@@ -345,6 +345,8 @@ def evaluate(model, loader, enable_fp=True, enable_quant=True, verbose=False, pr
 @torch.no_grad()
 def save_activation(model_without_ddp, loader, path, *names):
     if RANK == 0:
+        vis_dir, _ = os.path.split(path)
+        os.makedirs(vis_dir, exist_ok=True)
         act_bank = model_without_ddp.get_activations(loader, *names)
         np.savez(path, **act_bank)
     barrier()

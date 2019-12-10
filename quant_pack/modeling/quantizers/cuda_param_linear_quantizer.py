@@ -3,7 +3,7 @@
 import torch
 from torch.autograd import Function
 
-from quant_prob.extensions import ext
+from quant_pack.extensions import ext
 
 __all__ = ["cuda_fake_linear_quant"]
 

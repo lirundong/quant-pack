@@ -7,10 +7,10 @@ from torchvision.models.utils import load_state_dict_from_url
 from .idq import IDQ
 
 if torch.cuda.is_available():
-    from quant_prob.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant
+    from quant_pack.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant
     quantizer = cuda_fake_linear_quant
 else:
-    from quant_prob.modeling.quantizers.param_linear_quantizer import fake_linear_quant
+    from quant_pack.modeling.quantizers.param_linear_quantizer import fake_linear_quant
     quantizer = fake_linear_quant
 
 __all__ = ["resnet18_idq", "resnet50_idq", "resnet101_idq"]

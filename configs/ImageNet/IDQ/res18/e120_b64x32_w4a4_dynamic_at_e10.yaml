@@ -2,8 +2,15 @@ __BASE__: configs/ImageNet/IDQ/res18_e120_b64x32_vanilla.yaml
 
 arch:
   args:
-    kw: 5
-    ka: 5
+    use_multi_domain: true
+
+loss:
+  args:
+    detach_ref: true
+
+opt:
+  args:
+    alter_step: 1
 
 param_group:
   conf:
@@ -26,7 +33,7 @@ param_group:
             gamma: 0.1
     - type: Adam
       args: &adam_args
-        lr: 0.0001  # smaller LR
+        lr: 0.001
         weight_decay: 0.0
   groups:
     - <<: *sgd_args
@@ -35,19 +42,19 @@ param_group:
   args:
     ft_layers: null
 schedule:
-  quant_start_iter: 0
+  quant_start_iter: 6255  # epoch 10 on b64x32
   dynamic_variable_scale: 1.0
   variable_cfgs:
-    - ["soft_w", 0.5]
-    - ["hard_w", 0.5]
+    - ["soft_w", "soft_loss"]
+    - ["hard_w", "hard_loss"]
     - ["ref_w", 0.0]
   opt_cfgs:
     - [*weight_warmup, 0, 4, "iter"]
     - [*weight_decay, 0, -1, "epoch"]
 
 ckpt:
-  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/e120_b64x32_w5a5_vanilla/checkpoints/
+  dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/GQ_w4a4_dynamic_e10/checkpoints/
 
 log:
-  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/e120_b64x32_w5a5_vanilla/tb_logs
-  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/e120_b64x32_w5a5_vanilla/train
+  tb_dir: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/GQ_w4a4_dynamic_e10/tb_logs
+  file: /mnt/lustre/lirundong/Data/quant-prob/imgnet/res18/GQ_w4a4_dynamic_e10/train

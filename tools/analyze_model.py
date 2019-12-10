@@ -7,7 +7,7 @@ from pprint import pformat
 import torch
 import torch.nn as nn
 
-from quant_prob import modeling
+from quant_pack import modeling
 
 _tasks = {}
 
