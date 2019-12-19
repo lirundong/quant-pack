@@ -1,6 +1,9 @@
 torch >=1.1
 torchvision >=0.3
 tensorboard >=1.14
+mmcv >=0.2.14
+onnx >=1.5
+numpy
 future
 netifaces
 ipdb

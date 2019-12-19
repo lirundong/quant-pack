@@ -13,7 +13,7 @@ def get_imagenet_subset(src, dst, labels, label_map, n=100):
     meta = defaultdict(list)
 
     with open(src, "r", encoding="utf-8") as f:
-        print(f"loading src meta: `{src}`..")
+        print(f"loading csrc meta: `{src}`..")
         for l in f.readlines():
             img, label = l.strip().split()
             meta[int(label)].append(img)
@@ -30,7 +30,7 @@ def get_imagenet_subset(src, dst, labels, label_map, n=100):
 
 if __name__ == "__main__":
     parser = ArgumentParser("dataset manipulation tool")
-    parser.add_argument("--src", nargs="+", help="paths to source meta files")
+    parser.add_argument("--csrc", nargs="+", help="paths to source meta files")
     parser.add_argument("--dst", nargs="+", help="paths to destination meta files")
     parser.add_argument("-n", nargs="+", type=int, help="number of instances in each class")
     parser.add_argument("-c", default=200, type=int, help="number of classes")

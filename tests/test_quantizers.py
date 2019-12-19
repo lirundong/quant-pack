@@ -3,8 +3,8 @@
 import torch
 from torch.nn import Parameter
 
-from quant_pack.modeling.quantizers.param_linear_quantizer import fake_linear_quant, clamp
-from quant_pack.modeling.quantizers.cuda_param_linear_quantizer import cuda_fake_linear_quant
+from quant_pack.core.quant.quantizers import fake_linear_quant, clamp
+from quant_pack.core.quant.quantizers import cuda_fake_linear_quant
 
 SEED = 19260817
 DEVICE = torch.device("cuda:0")
@@ -112,7 +112,7 @@ def test_quant_num_grad_align_zero():
 
 
 def test_quant_num_grad_no_align_zero():
-    from quant_pack.modeling.quantizers.param_linear_quantizer import RoundSTE
+    from quant_pack.core.quant.quantizers import RoundSTE
     x = torch.randn(1, 3, 224, 224, requires_grad=True, dtype=DTYPE, device=DEVICE)
     d_qx = torch.randn_like(x).detach()
     lb = Parameter(x.detach().min() + 0.1)
@@ -171,7 +171,7 @@ def test_quant_num_grad_no_align_zero():
 
 
 def test_channel_quant_4d_param_grad():
-    from quant_pack.modeling.quantizers.param_linear_quantizer import RoundSTE
+    from quant_pack.core.quant.quantizers import RoundSTE
 
     x = torch.randn(32, 16, 5, 5, requires_grad=True, dtype=DTYPE, device=DEVICE)
     xc = x.detach().reshape(32, -1)
@@ -227,7 +227,7 @@ def test_channel_quant_4d_param_grad():
 
 
 def test_channel_quant_2d_param_grad():
-    from quant_pack.modeling.quantizers.param_linear_quantizer import RoundSTE
+    from quant_pack.core.quant.quantizers import RoundSTE
 
     x = torch.randn(32, 16, requires_grad=True, dtype=DTYPE, device=DEVICE)
     xc = x.detach()

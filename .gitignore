@@ -6,7 +6,7 @@
 *.tar
 *.gz
 
-# data
+# datasets
 [Dd]ataset/
 [Cc]heckpoints*/
 *.pth
@@ -17,7 +17,7 @@ __pycache__
 *.pyc
 .pytest_cache
 
-# built extensions
+# built caches
 build
 *.egg-info
 dist
