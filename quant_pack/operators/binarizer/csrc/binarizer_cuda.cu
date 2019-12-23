@@ -42,11 +42,11 @@ std::array<at::Tensor, 2> binary_forward_cuda(
       binary_forward_kernel<scalar_t>
         <<<grid, block, 0, stream>>>(
           /*nthreads=*/output_size,
-          /*x_t=*/x_t.data_ptr<scalar_t>(),
+          /*x_t=*/x_t.data<scalar_t>(),
           /*lb=*/static_cast<scalar_t>(lb),
           /*ub=*/static_cast<scalar_t>(ub),
-          /*qx_t=*/qx_t.data_ptr<scalar_t>(),
-          /*maskx_t=*/maskx_t.data_ptr<uint8_t>());
+          /*qx_t=*/qx_t.data<scalar_t>(),
+          /*maskx_t=*/maskx_t.data<uint8_t>());
     }
   );
 
@@ -80,11 +80,11 @@ std::array<at::Tensor, 3> binary_backward_cuda(
       binary_backward_kernel<scalar_t>
         <<<grid, block, 0, stream>>>(
           /*nthreads=*/output_size,
-          /*dy_t=*/dy_t.data_ptr<scalar_t>(),
-          /*maskx_t=*/maskx_t.data_ptr<uint8_t>(),
-          /*dx_t=*/dx_t.data_ptr<scalar_t>(),
-          /*dlb_t=*/dlb_buffer.data_ptr<scalar_t>(),
-          /*dub_t=*/dub_buffer.data_ptr<scalar_t>());
+          /*dy_t=*/dy_t.data<scalar_t>(),
+          /*maskx_t=*/maskx_t.data<uint8_t>(),
+          /*dx_t=*/dx_t.data<scalar_t>(),
+          /*dlb_t=*/dlb_buffer.data<scalar_t>(),
+          /*dub_t=*/dub_buffer.data<scalar_t>());
     }
   );
 

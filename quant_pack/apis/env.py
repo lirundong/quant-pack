@@ -98,8 +98,7 @@ def build_cfg(args):
     cfg = yaml.load(open(args.config, "r", encoding="utf-8"), Loader=yaml.SafeLoader)
 
     if cfg["__BASE__"]:
-        base_path = cfg["__BASE__"]
-        cfg.pop("__BASE__")
+        base_path = cfg.pop("__BASE__")
         if not os.path.exists(base_path):
             # __file__: quant_pack/apis/env.py
             project_root = Path(__file__).absolute().parents[2]

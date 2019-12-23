@@ -46,7 +46,7 @@ GLOG_vmodule=MemcachedClient=-1 srun \
   --mpi=pmi2 \
   --kill-on-bad-exit=1 \
   ${SLURM_EXTRA} \
-python $ROOT/tools/_deprecated_train.py \
+python $ROOT/tools/train.py \
   -v \
   --conf-path ${CONF_FILE} \
   --port ${PORT} \

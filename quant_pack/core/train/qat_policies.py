@@ -32,16 +32,16 @@ class EnableQuantAtIntervals(Hook):
     def before_epoch(self, runner: Runner):
         if self.granularity == "epoch":
             if _in_intervals(runner.epoch, self.intervals):
-                runner.model.quant_mode = self.quant_mode
+                runner.model.quant_mode = (self.quant_mode, "fp")
             else:
-                runner.model.quant_mode = "fp"
+                runner.model.quant_mode = ("fp", )
 
     def before_iter(self, runner: Runner):
         if self.granularity == "iter":
             if _in_intervals(runner.iter, self.intervals):
-                runner.model.quant_mode = self.quant_mode
+                runner.model.quant_mode = (self.quant_mode, "fp")
             else:
-                runner.model.quant_mode = "fp"
+                runner.model.quant_mode = ("fp", )
 
 
 class IntervalWarmupedVariable(Hook):
@@ -92,7 +92,7 @@ class OptimAlterStep(Hook):
 
     def after_iter(self, runner):
         loss = runner.outputs["loss"]
-        runner.module.zero_grad()
+        runner.model.zero_grad()
         loss.backward()
         if _in_intervals(runner.epoch, self.intervals):
             optim_idx = int((runner.inner_iter // self.alter_freq) % len(self.apply_to))

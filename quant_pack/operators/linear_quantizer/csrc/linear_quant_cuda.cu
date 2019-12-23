@@ -64,15 +64,15 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
         linear_quant_align_zero_forward_kernel<scalar_t>
           <<<grid, block, 0, stream>>>(
             /*nthreads=*/output_size,
-            /*x_t=*/x_t.data_ptr<scalar_t>(),
+            /*x_t=*/x_t.data<scalar_t>(),
             /*delta=*/static_cast<scalar_t>(delta),
             /*zero_point=*/static_cast<scalar_t>(zero_point),
             /*lb=*/static_cast<scalar_t>(lb),
             /*lb_nudged=*/static_cast<scalar_t>(lb_nudged),
             /*ub_nudged=*/static_cast<scalar_t>(ub_nudged),
-            /*qx_t=*/qx_t.data_ptr<scalar_t>(),
-            /*di_t=*/di_t.data_ptr<scalar_t>(),
-            /*maskx_t*/maskx_t.data_ptr<uint8_t>());
+            /*qx_t=*/qx_t.data<scalar_t>(),
+            /*di_t=*/di_t.data<scalar_t>(),
+            /*maskx_t*/maskx_t.data<uint8_t>());
       }
     );
 
@@ -88,13 +88,13 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
               /*nthreads=*/output_size,
               /*num_channels=*/num_channels,
               /*spatial_size=*/spatial_size,
-              /*x_t=*/x_t.data_ptr<scalar_t>(),
-              /*lb_t=*/lb_t.data_ptr<scalar_t>(),
-              /*ub_t=*/ub_t.data_ptr<scalar_t>(),
+              /*x_t=*/x_t.data<scalar_t>(),
+              /*lb_t=*/lb_t.data<scalar_t>(),
+              /*ub_t=*/ub_t.data<scalar_t>(),
               /*quant_levels=*/static_cast<scalar_t>(n),
-              /*qx_t=*/qx_t.data_ptr<scalar_t>(),
-              /*diff_i_t=*/di_t.data_ptr<scalar_t>(),
-              /*maskx_t=*/maskx_t.data_ptr<uint8_t>());
+              /*qx_t=*/qx_t.data<scalar_t>(),
+              /*diff_i_t=*/di_t.data<scalar_t>(),
+              /*maskx_t=*/maskx_t.data<uint8_t>());
         }
       );
 
@@ -108,14 +108,14 @@ std::array<at::Tensor, 3> linear_quant_forward_cuda(
           linear_quant_forward_kernel<scalar_t>
             <<<grid, block, 0, stream>>>(
               /*nthreads=*/output_size,
-              /*x_t=*/x_t.data_ptr<scalar_t>(),
+              /*x_t=*/x_t.data<scalar_t>(),
               /*delta=*/static_cast<scalar_t>(delta),
               /*lb=*/static_cast<scalar_t>(lb),
               /*ub=*/static_cast<scalar_t>(ub),
               /*n=*/static_cast<scalar_t>(n),
-              /*qx_t=*/qx_t.data_ptr<scalar_t>(),
-              /*diff_i_t=*/di_t.data_ptr<scalar_t>(),
-              /*maskx_t=*/maskx_t.data_ptr<uint8_t>());
+              /*qx_t=*/qx_t.data<scalar_t>(),
+              /*diff_i_t=*/di_t.data<scalar_t>(),
+              /*maskx_t=*/maskx_t.data<uint8_t>());
         }
       );
     }
@@ -159,14 +159,14 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
         linear_quant_align_zero_backward_kernel<scalar_t>
           <<<grid, block, 0, stream>>>(
             /*nthreads=*/output_size,
-            /*dy_t=*/dy_t.data_ptr<scalar_t>(),
-            /*di_t=*/di_t.data_ptr<scalar_t>(),
-            /*maskx_t=*/maskx_t.data_ptr<uint8_t>(),
+            /*dy_t=*/dy_t.data<scalar_t>(),
+            /*di_t=*/di_t.data<scalar_t>(),
+            /*maskx_t=*/maskx_t.data<uint8_t>(),
             /*n=*/static_cast<scalar_t>(std::pow(2., bit_width) - 1.),
             /*sign_lb=*/sign_lb_t.item<scalar_t>(),
-            /*dx_t=*/dx_t.data_ptr<scalar_t>(),
-            /*dlb_t=*/dlb_buffer.data_ptr<scalar_t>(),
-            /*dub_t=*/dub_buffer.data_ptr<scalar_t>());
+            /*dx_t=*/dx_t.data<scalar_t>(),
+            /*dlb_t=*/dlb_buffer.data<scalar_t>(),
+            /*dub_t=*/dub_buffer.data<scalar_t>());
       }
     );
 
@@ -178,12 +178,12 @@ std::array<at::Tensor, 3> linear_quant_backward_cuda(
         linear_quant_backward_kernel<scalar_t>
           <<<grid, block, 0, stream>>>(
             /*nthreads=*/output_size,
-            /*dy_t=*/dy_t.data_ptr<scalar_t>(),
-            /*diff_i_t=*/di_t.data_ptr<scalar_t>(),
-            /*maskx_t=*/maskx_t.data_ptr<uint8_t>(),
-            /*dx_t=*/dx_t.data_ptr<scalar_t>(),
-            /*dlb_t=*/dlb_buffer.data_ptr<scalar_t>(),
-            /*dub_t=*/dub_buffer.data_ptr<scalar_t>());
+            /*dy_t=*/dy_t.data<scalar_t>(),
+            /*diff_i_t=*/di_t.data<scalar_t>(),
+            /*maskx_t=*/maskx_t.data<uint8_t>(),
+            /*dx_t=*/dx_t.data<scalar_t>(),
+            /*dlb_t=*/dlb_buffer.data<scalar_t>(),
+            /*dub_t=*/dub_buffer.data<scalar_t>());
       }
     );
   }

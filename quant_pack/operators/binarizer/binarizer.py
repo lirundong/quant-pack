@@ -3,7 +3,7 @@
 import torch
 from torch.autograd import Function
 
-import quant_pack.operators.binarizer._C as ext
+from quant_pack.operators.binarizer._C import binary_forward, binary_backward
 
 
 class BinaryFunc(Function):
@@ -13,7 +13,7 @@ class BinaryFunc(Function):
         with torch.no_grad():
             assert lb.lt(ub), f"invalid binarization range: lb={lb.max().item()}, ub={ub.min().item()}"
         x = x.contiguous()
-        qx, mask_x = ext.binary_forward(x, lb, ub)
+        qx, mask_x = binary_forward(x, lb, ub)
         ctx.save_for_backward(mask_x)
         return qx
 
@@ -21,5 +21,5 @@ class BinaryFunc(Function):
     def backward(ctx, dy):
         dy = dy.clone()
         mask_x = ctx.saved_tensors
-        dx, dlb, dub = ext.binary_backward(dy, mask_x)
+        dx, dlb, dub = binary_backward(dy, mask_x)
         return dx, dlb, dub

@@ -35,9 +35,12 @@ class CEKLLoss(Hook):
         ce_weight = runner.named_vars[self.ce_loss_weight_name]
         ce_loss = F.cross_entropy(*ce_inputs) * ce_weight
 
-        kl_inputs = [runner.outputs[n] for n in self.kl_inputs]
-        kl_weight = runner.named_vars[self.kl_loss_weight_name]
-        kl_temperature = runner.named_vars[self.kl_temperature_name]
-        kl_loss = _kl_distillation_loss(*kl_inputs, kl_temperature) * kl_weight
+        if all(n in runner.outputs for n in self.kl_inputs):
+            kl_inputs = [runner.outputs[n] for n in self.kl_inputs]
+            kl_weight = runner.named_vars[self.kl_loss_weight_name]
+            kl_temperature = runner.named_vars[self.kl_temperature_name]
+            kl_loss = _kl_distillation_loss(*kl_inputs, kl_temperature) * kl_weight
+        else:
+            kl_loss = 0.
 
         runner.outputs["loss"] = ce_loss + kl_loss

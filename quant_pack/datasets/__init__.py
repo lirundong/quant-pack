@@ -25,7 +25,7 @@ _train_transforms = {
         _normalize_rgb,
         Cutout(16, 1, False),
     ]),
-    "ImageNet": transforms.Compose([
+    "ImageNetST": transforms.Compose([
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ColorJitter(0.2, 0.2, 0.2, 0.1),
@@ -38,7 +38,7 @@ _eval_transforms = {
         transforms.ToTensor(),
         _normalize_rgb,
     ]),
-    "ImageNet": transforms.Compose([
+    "ImageNetST": transforms.Compose([
         transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),

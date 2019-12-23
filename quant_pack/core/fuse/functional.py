@@ -1,9 +1,23 @@
 # -*- coding: utf-8 -*-
 
+from distutils.version import LooseVersion
+
 import torch
 import torch.nn.functional as F
 
 __all__ = ["fused_conv_bn_forward", "fused_bn_forward", "fused_fc_bn_forward"]
+
+
+def _var_mean(input, dim, unbiased=True):
+    var = torch.var(input, dim=dim, unbiased=unbiased)
+    mean = torch.mean(input, dim=dim)
+    return var, mean
+
+
+if LooseVersion(torch.__version__) >= LooseVersion("1.2"):
+    var_mean = torch.var_mean
+else:
+    var_mean = _var_mean
 
 
 def fused_conv_bn_forward(module, input):
@@ -16,7 +30,7 @@ def fused_conv_bn_forward(module, input):
             pre_activation = F.conv2d(input, module.weight, module.bias, module.stride,
                                       module.padding, module.dilation, module.groups)
             pre_activation = pre_activation.permute(1, 0, 2, 3).reshape(module.out_channels, -1)
-            var, mean = torch.var_mean(pre_activation, dim=1, unbiased=True)
+            var, mean = var_mean(pre_activation, dim=1)
             module.running_mean.mul_(1. - module.bn_momentum).add_(module.bn_momentum, mean)
             module.running_var.mul_(1. - module.bn_momentum).add_(module.bn_momentum, var)
         else:

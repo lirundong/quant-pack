@@ -77,6 +77,8 @@ class ParametrizedQuantWrapper(nn.Module):
             bn_layer._parameters.clear()
             bn_layer._buffers.clear()
 
+            # place holders, filled by pre_iter_hooks from m.*qconf later
+            conv_layer.weight_transform = conv_layer.input_transform = None
             conv_layer.forward = MethodType(_registered_fused_forward_functions[conv_layer.__class__], conv_layer)
             bn_layer.forward = MethodType(_registered_fused_forward_functions[bn_layer.__class__], bn_layer)
 
@@ -98,18 +100,17 @@ class ParametrizedQuantWrapper(nn.Module):
                         ("a_lb", nn.Parameter(torch.tensor(0.), requires_grad=True)),
                         ("a_ub", nn.Parameter(torch.tensor(1.), requires_grad=True)),
                     )
-                    # place holders, filled by pre_iter_hooks from m.*qconf later
-                    m.weight_transform = m.input_transform = None
                     m.weight_qconf = QuantConfig(lb=m.w_lb, ub=m.w_ub, **self.quant_conf)
                     m.input_qconf = QuantConfig(lb=m.a_lb, ub=m.a_ub, **self.quant_conf)
                     self._quant_submodules.add(m)
 
                     if m not in self._fused_submodules:
+                        m.weight_transform = m.input_transform = None
                         m.forward = MethodType(_registered_quant_forward_functions[m.__class__], m)
 
-    def to_ddp(self):
+    def to_ddp(self, device):
         assert dist.is_available() and dist.is_initialized()
-        self.module = DistributedDataParallel(self.module)
+        self.module = DistributedDataParallel(self.module, device_ids=[device], find_unused_parameters=True)
 
     def to_torch_quant(self):
         raise NotImplementedError()
@@ -130,7 +131,7 @@ class ParametrizedQuantWrapper(nn.Module):
                     optim_params["params"].append(param)
             for name in matched_names:
                 named_params.pop(name)
-            optim = torch.optim.__dict__[optim_type](optim_params, **optim_group["args"])
+            optim = torch.optim.__dict__[optim_type]([optim_params], **optim_group["args"])
             ret[optim_name] = optim
         return ret
 
@@ -198,7 +199,7 @@ class ParametrizedQuantWrapper(nn.Module):
         img, label = data_batch
         outputs = {"label": label.to(device, non_blocking=True)}
         for i, mode in enumerate(quant_mode):
-            assert mode in VALID_QUANT_MODE
+            assert mode in VALID_QUANT_MODE, f"invalid model running mode: {mode}"
             if mode is "fp":
                 model.fp_w()
                 model.fp_a()

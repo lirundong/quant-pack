@@ -19,22 +19,28 @@ def _load_pre_trained(model, ckpt_path):
     model.load_state_dict(ckpt)
 
 
+def _list_elem_to_tuple(*args):
+    ret = []
+    for arg in args:
+        assert isinstance(arg, (tuple, list))
+        ret.append(tuple(arg))
+    return ret
+
+
 def _dist_train(cfg):
     train_set, eval_set = get_dataset(cfg.dataset.name, eval_only=False, **cfg.dataset.args)
     train_loader = DataLoader(train_set, sampler=DistributedSampler(train_set), **cfg.train.data_loader.args)
     eval_loader = DataLoader(eval_set, sampler=DistributedSampler(eval_set), **cfg.eval.data_loader.args)
 
     model = torchvision.models.__dict__[cfg.model.name](**cfg.model.args)
-    if cfg.pre_trained.before_bn_folding:
-        _load_pre_trained(model, cfg.pre_trained.before_bn_folding)
+    if cfg.pre_trained:
+        _load_pre_trained(model, cfg.pre_trained)
     bn_folding_mapping = wrapper.track_bn_folding_mapping(model, torch.randn(*cfg.model.input_size))
     model = wrapper.__dict__[cfg.wrapper.name](model, bn_folding_mapping=bn_folding_mapping, **cfg.wrapper.args)
-    if cfg.pre_trained.after_bn_folding:
-        _load_pre_trained(model.module, cfg.pre_trained.after_bn_folding)
     model.module.to(cfg.device)
-    model.to_ddp()
+    model.to_ddp(cfg.device)
 
-    optims = model.get_optimizers(cfg.train.optim_groups)
+    optims = model.get_optimizers(*cfg.train.optim_groups)
     trainer = runner.MultiOptimRunner(model, model.batch_processor, optims)
     trainer.register_qat_hooks(cfg.train.loss, cfg.train.lr_policies, cfg.train.qat_policies)
     trainer.register_eval_hooks(*cfg.eval.metrics)
@@ -42,7 +48,7 @@ def _dist_train(cfg):
     if cfg.resume:
         trainer.resume(cfg.resume)
 
-    trainer.run([train_loader, eval_loader], cfg.work_flow, cfg.epochs)
+    trainer.run([train_loader, eval_loader], _list_elem_to_tuple(*cfg.work_flow), cfg.epochs, device=cfg.device)
 
 
 def _local_train(cfg):

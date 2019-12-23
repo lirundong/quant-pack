@@ -31,7 +31,7 @@ train:
       num_workers: 2
   optim_groups:
     - name: &n_q quant_params
-      matchs:
+      matches:
         - .*(_lb|_ub)$
       optim_type: Adam
       args:
@@ -91,7 +91,7 @@ train:
           - *n_q
         alter_freq: 1
         intervals: *q_intervals
-  runtime_hooks: none  # modify this if runtime diagnosis is required
+  runtime_hooks: null  # modify this if runtime diagnosis is required
 
 eval:
   data_loader:
@@ -115,7 +115,5 @@ dataset:
     meta_dir: /mnt/lustre/share/images/meta/
     color: true
 
-pre_trained:
-  before_bn_folding: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
-  after_bn_folding: null
+pre_trained: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
 resume: null
