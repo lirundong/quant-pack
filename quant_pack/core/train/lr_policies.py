@@ -3,8 +3,6 @@
 import torch.distributed as dist
 from mmcv.runner import LrUpdaterHook
 
-__all__ = ["StepMultiOptimLrUpdateHook"]
-
 
 def _get_applied_param_groups(runner, apply_to):
     param_groups = []

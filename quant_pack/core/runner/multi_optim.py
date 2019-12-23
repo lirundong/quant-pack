@@ -4,7 +4,7 @@ import collections
 from itertools import chain
 
 from torch.optim.optimizer import Optimizer
-from mmcv.runner import Runner
+from mmcv.runner import Runner, IterTimerHook
 
 import quant_pack.core.train as training
 import quant_pack.core.eval as evaluation
@@ -39,21 +39,25 @@ class MultiOptimRunner(Runner):
         else:
             return super(MultiOptimRunner, self).init_optimizer(optimizer)
 
-    def register_qat_hooks(self, loss, lr_policies, qat_policies):
+    def register_qat_hooks(self, loss, metrics, lr_policies, qat_policies):
         assert isinstance(loss, dict)
+        assert isinstance(metrics, (tuple, list))
         assert isinstance(lr_policies, (tuple, list))
         assert isinstance(qat_policies, (tuple, list))
 
+        loss = training.build_loss(loss)
+        metrics = training.build_metrics(*metrics)
         lr_policies = training.build_lr_policies(*lr_policies)
         qat_policies = training.build_qat_policies(*qat_policies)
-        loss = training.build_losses(loss)
 
         # make sure loss firstly getting ready after `batch_processor`
         self.register_hook(loss, priority="HIGH")
-        for hook in chain(qat_policies, lr_policies):
+        self.register_hook(IterTimerHook())
+
+        for hook in chain(metrics, qat_policies, lr_policies):
             self.register_hook(hook)
 
-    def register_eval_hooks(self, *metrics):
+    def register_eval_hooks(self, metrics):
         for metric in metrics:
             metric_cls = metric["name"]
             metric_args = metric["args"]
@@ -61,3 +65,10 @@ class MultiOptimRunner(Runner):
                 metric_cls += "Hook"
             metric_hook = evaluation.__dict__[metric_cls](**metric_args)
             self.register_hook(metric_hook)
+
+    def inject_runtime_hooks(self, runtime_hooks):
+        raise NotImplementedError()
+
+    def current_lr(self):
+        lrs = super(MultiOptimRunner, self).current_lr()
+        return lrs[::-1]

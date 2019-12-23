@@ -19,7 +19,7 @@ def _load_pre_trained(model, ckpt_path):
     model.load_state_dict(ckpt)
 
 
-def _list_elem_to_tuple(*args):
+def _item_to_tuple(*args):
     ret = []
     for arg in args:
         assert isinstance(arg, (tuple, list))
@@ -41,14 +41,19 @@ def _dist_train(cfg):
     model.to_ddp(cfg.device)
 
     optims = model.get_optimizers(*cfg.train.optim_groups)
-    trainer = runner.MultiOptimRunner(model, model.batch_processor, optims)
-    trainer.register_qat_hooks(cfg.train.loss, cfg.train.lr_policies, cfg.train.qat_policies)
-    trainer.register_eval_hooks(*cfg.eval.metrics)
+    trainer = runner.MultiOptimRunner(model, model.batch_processor, optims, cfg.work_dir)
+    trainer.register_qat_hooks(cfg.train.loss, cfg.train.metrics, cfg.train.lr_policies, cfg.train.qat_policies)
 
+    if cfg.runtime_hooks:
+        trainer.inject_runtime_hooks(cfg.runtime_hooks)
+    if cfg.eval:
+        trainer.register_eval_hooks(cfg.eval.metrics)
+    if cfg.log:
+        trainer.register_logger_hooks(cfg.log)
     if cfg.resume:
         trainer.resume(cfg.resume)
 
-    trainer.run([train_loader, eval_loader], _list_elem_to_tuple(*cfg.work_flow), cfg.epochs, device=cfg.device)
+    trainer.run([train_loader, eval_loader], _item_to_tuple(*cfg.work_flow), cfg.epochs, device=cfg.device)
 
 
 def _local_train(cfg):

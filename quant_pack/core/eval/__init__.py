@@ -1,3 +1,5 @@
 # -*- coding: utf-8 -*-
 
-from .classification import DistEvalTopKHook
+from .cls_acc import DistEvalTopKHook
+
+__all__ = ["DistEvalTopKHook"]

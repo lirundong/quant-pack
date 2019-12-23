@@ -5,7 +5,7 @@ from typing import Tuple
 import torch.nn.functional as F
 from mmcv.runner import Hook
 
-__all__ = ["CEKLLoss"]
+from .utils import get_scalar
 
 
 def _kl_distillation_loss(logits, references, temperature):
@@ -44,3 +44,8 @@ class CEKLLoss(Hook):
             kl_loss = 0.
 
         runner.outputs["loss"] = ce_loss + kl_loss
+        runner.outputs["num_samples"] = ce_inputs[0].size(0)
+        runner.outputs["log_vars"] = {
+            "ce_loss": get_scalar(ce_loss),
+            "kl_loss": get_scalar(kl_loss),
+        }

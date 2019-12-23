@@ -12,8 +12,8 @@ from torch.nn.parallel import DistributedDataParallel
 
 from quant_pack.core.quant.config import QuantConfig
 from quant_pack.core.train.qat_policies import VALID_QUANT_MODE
-from ._registries import _registered_fused_forward_functions, \
-    _registered_quant_forward_functions
+from ._registries import FUSED_FORWARD_FUNCTIONS, \
+    QUANT_FORWARD_FUNCTIONS
 
 
 def _get_submodule(module, sub_name):
@@ -29,7 +29,7 @@ def _register_parameters(module, *named_params):
 
 class ParametrizedQuantWrapper(nn.Module):
 
-    _quantable_types = tuple(_registered_quant_forward_functions.keys())
+    _quantable_types = tuple(QUANT_FORWARD_FUNCTIONS.keys())
 
     def __init__(self, module, quant_conf, bn_folding_mapping, fp_layers=None):
         """Model wrapper for parameterized-quantized training/evaluation.
@@ -79,8 +79,8 @@ class ParametrizedQuantWrapper(nn.Module):
 
             # place holders, filled by pre_iter_hooks from m.*qconf later
             conv_layer.weight_transform = conv_layer.input_transform = None
-            conv_layer.forward = MethodType(_registered_fused_forward_functions[conv_layer.__class__], conv_layer)
-            bn_layer.forward = MethodType(_registered_fused_forward_functions[bn_layer.__class__], bn_layer)
+            conv_layer.forward = MethodType(FUSED_FORWARD_FUNCTIONS[conv_layer.__class__], conv_layer)
+            bn_layer.forward = MethodType(FUSED_FORWARD_FUNCTIONS[bn_layer.__class__], bn_layer)
 
             self._fused_submodules.add(conv_layer)
             self._fused_submodules.add(bn_layer)
@@ -106,7 +106,7 @@ class ParametrizedQuantWrapper(nn.Module):
 
                     if m not in self._fused_submodules:
                         m.weight_transform = m.input_transform = None
-                        m.forward = MethodType(_registered_quant_forward_functions[m.__class__], m)
+                        m.forward = MethodType(QUANT_FORWARD_FUNCTIONS[m.__class__], m)
 
     def to_ddp(self, device):
         assert dist.is_available() and dist.is_initialized()

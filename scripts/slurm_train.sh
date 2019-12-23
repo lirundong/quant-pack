@@ -4,9 +4,16 @@ set -e
 ROOT=$PWD/..
 export PYTHONPATH=$ROOT:$PYTHONPATH
 
+if [ -z ${3+x} ]; then
+  NODES=""
+else
+  NODES="--nodelist=${3}"
+fi
+
 GLOG_vmodule=MemcachedClient=-1 srun \
   -p ${1:-VI_AIC_1080TI} \
   -n${2:-8} \
+  ${NODES} \
   --gres=gpu:8 \
   --ntasks-per-node=8 \
   --job-name=quant_pack \

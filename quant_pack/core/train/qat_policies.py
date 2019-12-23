@@ -8,9 +8,6 @@ VALID_GRANULARITY = ("epoch", "iter")
 
 IntervalT = List[Tuple[int, int]]
 
-__all__ = ["EnableQuantAtIntervals", "IntervalWarmupedVariable", "ConstantVariable",
-           "OptimAlterStep"]
-
 
 def _in_intervals(i: int, intervals: IntervalT) -> Optional[Tuple[int, int]]:
     ret = None
@@ -29,14 +26,14 @@ class EnableQuantAtIntervals(Hook):
         self.granularity = granularity
         self.intervals = intervals
 
-    def before_epoch(self, runner: Runner):
+    def before_train_epoch(self, runner: Runner):
         if self.granularity == "epoch":
             if _in_intervals(runner.epoch, self.intervals):
                 runner.model.quant_mode = (self.quant_mode, "fp")
             else:
                 runner.model.quant_mode = ("fp", )
 
-    def before_iter(self, runner: Runner):
+    def before_train_iter(self, runner: Runner):
         if self.granularity == "iter":
             if _in_intervals(runner.iter, self.intervals):
                 runner.model.quant_mode = (self.quant_mode, "fp")
@@ -57,7 +54,7 @@ class IntervalWarmupedVariable(Hook):
         if not hasattr(runner, "named_vars"):
             runner.named_vars = dict()
 
-    def before_iter(self, runner: Runner):
+    def before_train_iter(self, runner: Runner):
         if _in_intervals(runner.epoch, self.intervals):
             warmup_interval = _in_intervals(runner.epoch, self.warmup_intervals)
             if warmup_interval:
@@ -90,7 +87,7 @@ class OptimAlterStep(Hook):
         self.alter_freq = alter_freq
         self.intervals = intervals
 
-    def after_iter(self, runner):
+    def after_train_iter(self, runner):
         loss = runner.outputs["loss"]
         runner.model.zero_grad()
         loss.backward()
