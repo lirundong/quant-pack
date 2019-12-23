@@ -16,8 +16,6 @@ import numpy as np
 from easydict import EasyDict
 from deepmerge import Merger
 
-__all__ = ["init_environment", "build_cfg"]
-
 
 def _get_master_ip_slurm():
     node_list = os.environ["SLURM_JOB_NODELIST"]

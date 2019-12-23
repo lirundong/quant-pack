@@ -8,23 +8,7 @@ import quant_pack.core.wrapper as wrapper
 import quant_pack.core.runner as runner
 from quant_pack.datasets import get_dataset
 
-__all__ = ["train_classifier"]
-
-
-def _load_pre_trained(model, ckpt_path):
-    device = torch.device("cpu")
-    ckpt = torch.load(open(ckpt_path, "rb"), device)
-    if "model" in ckpt.keys():
-        ckpt = ckpt["model"]
-    model.load_state_dict(ckpt)
-
-
-def _item_to_tuple(*args):
-    ret = []
-    for arg in args:
-        assert isinstance(arg, (tuple, list))
-        ret.append(tuple(arg))
-    return ret
+from .utils import load_pre_trained, item_to_tuple
 
 
 def _dist_train(cfg):
@@ -34,7 +18,7 @@ def _dist_train(cfg):
 
     model = torchvision.models.__dict__[cfg.model.name](**cfg.model.args)
     if cfg.pre_trained:
-        _load_pre_trained(model, cfg.pre_trained)
+        load_pre_trained(model, cfg.pre_trained)
     bn_folding_mapping = wrapper.track_bn_folding_mapping(model, torch.randn(*cfg.model.input_size))
     model = wrapper.__dict__[cfg.wrapper.name](model, bn_folding_mapping=bn_folding_mapping, **cfg.wrapper.args)
     model.module.to(cfg.device)
@@ -53,7 +37,7 @@ def _dist_train(cfg):
     if cfg.resume:
         trainer.resume(cfg.resume)
 
-    trainer.run([train_loader, eval_loader], _item_to_tuple(*cfg.work_flow), cfg.epochs, device=cfg.device)
+    trainer.run([train_loader, eval_loader], item_to_tuple(*cfg.work_flow), cfg.epochs, device=cfg.device)
 
 
 def _local_train(cfg):

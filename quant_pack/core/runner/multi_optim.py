@@ -70,5 +70,7 @@ class MultiOptimRunner(Runner):
         raise NotImplementedError()
 
     def current_lr(self):
+        if self.mode == "val" and self.optimizer is None:
+            return [0., ]
         lrs = super(MultiOptimRunner, self).current_lr()
         return lrs[::-1]

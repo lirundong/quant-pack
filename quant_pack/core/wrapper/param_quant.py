@@ -194,22 +194,23 @@ class ParametrizedQuantWrapper(nn.Module):
         return outputs
 
     @staticmethod
-    def batch_processor(model, data_batch, train_mode, device):
-        quant_mode = model.quant_mode
+    def batch_processor(model, data_batch, train_mode, device, quant_mode=None):
+        if not train_mode and quant_mode is None:
+            quant_mode = model.quant_mode
         img, label = data_batch
         outputs = {"label": label.to(device, non_blocking=True)}
         for i, mode in enumerate(quant_mode):
             assert mode in VALID_QUANT_MODE, f"invalid model running mode: {mode}"
-            if mode is "fp":
+            if mode == "fp":
                 model.fp_w()
                 model.fp_a()
-            elif mode is "quant":
+            elif mode == "quant":
                 model.quant_w()
                 model.quant_a()
-            elif mode is "qw_fa":
+            elif mode == "qw_fa":
                 model.quant_w()
                 model.fp_a()
-            elif mode is "fw_qa":
+            elif mode == "fw_qa":
                 model.fp_w()
                 model.quant_a()
 

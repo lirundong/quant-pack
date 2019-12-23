@@ -14,6 +14,8 @@ def main():
                         help="higher priority configuration (in JSON format)")
     parser.add_argument("--distributed", "-d", action="store_true",
                         help="training in distributed environment (SLURM)")
+    parser.add_argument("--eval-only", "-e", action="store_true",
+                        help="only do evaluation")
     parser.add_argument("--port", "-p", type=int,
                         help="distributed communication port")
     parser.add_argument("--seed", "-s", type=int, default=19260817,
@@ -21,7 +23,11 @@ def main():
     args = parser.parse_args()
     cfg = qapi.build_cfg(args)
     qapi.init_environment(cfg)
-    qapi.train_classifier(cfg)
+
+    if cfg.eval_only:
+        qapi.eval_classifier(cfg)
+    else:
+        qapi.train_classifier(cfg)
 
 
 if __name__ == "__main__":

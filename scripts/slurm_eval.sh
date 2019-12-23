@@ -11,7 +11,7 @@ else
 fi
 
 GLOG_vmodule=MemcachedClient=-1 srun \
-  -p ${1:-VI_AIC_1080TI} \
+  -p ${1:-Test} \
   -n${2:-8} \
   ${NODES} \
   --gres=gpu:8 \
@@ -22,4 +22,5 @@ GLOG_vmodule=MemcachedClient=-1 srun \
 python $ROOT/tools/train_val_classifier.py \
   --config $ROOT/configs/GQ_Nets/resnet18_base.yaml \
   --port $(shuf -i 12000-20000 -n 1) \
-  --distributed
+  --distributed \
+  --eval-only

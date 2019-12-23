@@ -105,14 +105,18 @@ eval:
       batch_size: 128
       shuffle: false
       pin_memory: true
-      num_workers: 2
+      num_workers: 1
   metrics:
     - name: DistEvalTopK
       args:
         logits_names:
           - fp
           - quant
+          - qw_fa
         topk: [1, 5]
+  quant_mode:
+    - fp
+    - qw_fa
 
 runtime_hooks: null  # modify this if runtime diagnosis is required
 
@@ -129,5 +133,5 @@ dataset:
     color: true
 
 work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-base/
-pre_trained: null  # /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
+pre_trained: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
 resume: null
