@@ -195,7 +195,7 @@ class ParametrizedQuantWrapper(nn.Module):
 
     @staticmethod
     def batch_processor(model, data_batch, train_mode, device, quant_mode=None):
-        if not train_mode and quant_mode is None:
+        if train_mode and quant_mode is None:
             quant_mode = model.quant_mode
         img, label = data_batch
         outputs = {"label": label.to(device, non_blocking=True)}
