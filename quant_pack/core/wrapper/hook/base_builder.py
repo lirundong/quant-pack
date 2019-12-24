@@ -1,27 +1,26 @@
 # -*- coding: utf-8 -*-
 
-from mmcv.runner import Hook
 
+class HookBuilder:
 
-class RuntimeInjectableHook(Hook):
-
-    def __init__(self, phase):
+    def __init__(self, phase, hook_reg):
         assert phase in ("forward", "forward_pre", "backward")
         self._phase = phase
+        self._reg = hook_reg
 
-    @staticmethod
-    def _runtime_forward_hook(module, input, output):
+    def _runtime_forward_hook(self, module, input, output):
         raise NotImplementedError()
 
-    @staticmethod
-    def _runtime_forward_pre_hook(module, input):
+    def _runtime_forward_pre_hook(self, module, input):
         raise NotImplementedError()
 
-    @staticmethod
-    def _runtime_backward_hook(module, grad_input, grad_output):
+    def _runtime_backward_hook(self, module, grad_input, grad_output):
         raise NotImplementedError()
 
     def match(self, name, module):
+        raise NotImplementedError()
+
+    def inject_at(self, *args, **kwargs):
         raise NotImplementedError()
 
     def get_hook(self):

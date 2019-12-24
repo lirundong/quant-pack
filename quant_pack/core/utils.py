@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 
+from collections import OrderedDict
+
 import torch
 import torch.distributed as dist
 
-__all__ = ["cls_acc", "SyncValue"]
+__all__ = ["cls_acc", "clear_or_init", "SyncValue"]
 
 
 @torch.no_grad()
@@ -19,6 +21,13 @@ def cls_acc(logits, label, topk=(1,)):
         correct_k = correct[:k].flatten().sum(dtype=torch.float32)
         res.append(correct_k * (100.0 / batch_size))
     return res
+
+
+def clear_or_init(obj, name):
+    if not hasattr(obj, name):
+        setattr(obj, name, OrderedDict())
+    else:
+        getattr(obj, name).clear()
 
 
 class SyncValue:

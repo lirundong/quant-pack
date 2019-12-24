@@ -19,7 +19,3 @@ def track_bn_folding_mapping(model, dummy_input):
                     conv_layer_name = onnx_model.graph.node[i - 1].input[1].replace(".weight", "")
                     bn_conv_mappings.append((bn_layer_name, conv_layer_name))
     return bn_conv_mappings
-
-
-def build_runtime_hooks(cfg):
-    raise NotImplementedError()

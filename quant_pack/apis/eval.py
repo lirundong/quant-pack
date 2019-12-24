@@ -27,7 +27,7 @@ def _dist_eval(cfg):
     evaluator.register_eval_hooks(cfg.eval.metrics)
 
     if cfg.runtime_hooks:
-        evaluator.inject_runtime_hooks(cfg.runtime_hooks)
+        evaluator.inject_runtime_hooks(**cfg.runtime_hooks)
     if cfg.log:
         evaluator.register_logger_hooks(cfg.log)
     if cfg.resume:

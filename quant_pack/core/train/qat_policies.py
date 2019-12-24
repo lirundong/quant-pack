@@ -19,9 +19,13 @@ def _in_intervals(i: int, intervals: IntervalT) -> Optional[Tuple[int, int]]:
 
 class EnableQuantAtIntervals(Hook):
 
-    def __init__(self, quant_mode: str, granularity: str, intervals: IntervalT):
+    def __init__(self, quant_mode: str, granularity: str, intervals: IntervalT, always_enable_fp: bool = False):
         assert quant_mode in VALID_QUANT_MODE
         assert granularity in VALID_GRANULARITY
+        if always_enable_fp:
+            quant_mode = (quant_mode, "fp")
+        else:
+            quant_mode = (quant_mode,)
         self.quant_mode = quant_mode
         self.granularity = granularity
         self.intervals = intervals
@@ -29,16 +33,16 @@ class EnableQuantAtIntervals(Hook):
     def before_train_epoch(self, runner: Runner):
         if self.granularity == "epoch":
             if _in_intervals(runner.epoch, self.intervals):
-                runner.model.quant_mode = (self.quant_mode, "fp")
+                runner.model.quant_mode = self.quant_mode
             else:
-                runner.model.quant_mode = ("fp", )
+                runner.model.quant_mode = ("fp",)
 
     def before_train_iter(self, runner: Runner):
         if self.granularity == "iter":
             if _in_intervals(runner.iter, self.intervals):
-                runner.model.quant_mode = (self.quant_mode, "fp")
+                runner.model.quant_mode = self.quant_mode
             else:
-                runner.model.quant_mode = ("fp", )
+                runner.model.quant_mode = ("fp",)
 
 
 class IntervalWarmupedVariable(Hook):

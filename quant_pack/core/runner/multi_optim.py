@@ -8,6 +8,7 @@ from mmcv.runner import Runner, IterTimerHook
 
 import quant_pack.core.train as training
 import quant_pack.core.eval as evaluation
+import quant_pack.core.wrapper as wrapper
 
 
 class _OptimDict(dict):
@@ -66,8 +67,9 @@ class MultiOptimRunner(Runner):
             metric_hook = evaluation.__dict__[metric_cls](**metric_args)
             self.register_hook(metric_hook)
 
-    def inject_runtime_hooks(self, runtime_hooks):
-        raise NotImplementedError()
+    def inject_runtime_hooks(self, interval, hooks, post_process):
+        inject_hook = wrapper.InjectRuntimeHook(interval, hooks, post_process)
+        self.register_hook(inject_hook)
 
     def current_lr(self):
         if self.mode == "val" and self.optimizer is None:

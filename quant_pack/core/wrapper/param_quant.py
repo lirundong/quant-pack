@@ -53,7 +53,7 @@ class ParametrizedQuantWrapper(nn.Module):
 
         self.module = module
         self.quant_conf = quant_conf
-        self._module_forward = module.forward
+        self._module_forward = module.__class__.forward
         self._quant_submodules = set()
         self._fused_submodules = set()
 
@@ -195,8 +195,9 @@ class ParametrizedQuantWrapper(nn.Module):
 
     @staticmethod
     def batch_processor(model, data_batch, train_mode, device, quant_mode=None):
-        if train_mode and quant_mode is None:
+        if quant_mode is None:
             quant_mode = model.quant_mode
+        runtime_hooks = model.runtime_hooks
         img, label = data_batch
         outputs = {"label": label.to(device, non_blocking=True)}
         for i, mode in enumerate(quant_mode):
@@ -214,6 +215,11 @@ class ParametrizedQuantWrapper(nn.Module):
                 model.fp_w()
                 model.quant_a()
 
-            outputs[mode] = model(img.to(device, non_blocking=True))
+            activated_hooks = []
+            for _, hook in runtime_hooks.items():
+                if hook.inject_at(mode):
+                    activated_hooks.append(hook)
+
+            outputs[mode] = model(img.to(device, non_blocking=True), runtime_hooks=activated_hooks)
 
         return outputs

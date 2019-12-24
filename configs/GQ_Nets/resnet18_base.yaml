@@ -118,7 +118,26 @@ eval:
     - fp
     - qw_fa
 
-runtime_hooks: null  # modify this if runtime diagnosis is required
+runtime_hooks:
+  interval: 50
+  hooks:
+    - name: &fp_act fp_activations
+      type: SaveActivation
+      args:
+        target_cls: (Conv[\d]d|Linear)
+        inject_at_mode: fc
+    - name: &quant_act quant_activations
+      type: SaveActivation
+      args:
+        target_cls: (Conv[\d]d|Linear)
+        inject_at_mode: quant
+  post_process:
+    - name: cos_distance
+      type: CosineDistance
+      args:
+        apply_to:
+          - *fp_act
+          - *quant_act
 
 log:
   interval: 100

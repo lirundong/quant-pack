@@ -1,18 +1,9 @@
 # -*- coding: utf-8 -*-
 
-from collections import OrderedDict
-
 import torch.distributed as dist
 from mmcv.runner import Hook
 
-from quant_pack.core.utils import cls_acc, SyncValue
-
-
-def _clr_or_init(obj, name):
-    if not hasattr(obj, name):
-        setattr(obj, name, OrderedDict())
-    else:
-        getattr(obj, name).clear()
+from quant_pack.core.utils import cls_acc, SyncValue, clear_or_init
 
 
 class DistEvalTopKHook(Hook):
@@ -25,7 +16,7 @@ class DistEvalTopKHook(Hook):
         self.topk = topk
 
     def before_val_epoch(self, runner):
-        _clr_or_init(runner, self.BUFFER_NAME)
+        clear_or_init(runner, self.BUFFER_NAME)
         buffer = getattr(runner, self.BUFFER_NAME)
         for name in self.logits_names:
             for k in self.topk:
