@@ -4,11 +4,12 @@ import collections
 from itertools import chain
 
 from torch.optim.optimizer import Optimizer
-from mmcv.runner import Runner, IterTimerHook
+from mmcv.runner import Runner, IterTimerHook, CheckpointHook, obj_from_dict
 
 import quant_pack.core.train as training
 import quant_pack.core.eval as evaluation
 import quant_pack.core.wrapper as wrapper
+import quant_pack.core.logger as logger
 
 
 class _OptimDict(dict):
@@ -54,6 +55,7 @@ class MultiOptimRunner(Runner):
         # make sure loss firstly getting ready after `batch_processor`
         self.register_hook(loss, priority="HIGH")
         self.register_hook(IterTimerHook())
+        self.register_hook(CheckpointHook())
 
         for hook in chain(metrics, qat_policies, lr_policies):
             self.register_hook(hook)
@@ -66,6 +68,18 @@ class MultiOptimRunner(Runner):
                 metric_cls += "Hook"
             metric_hook = evaluation.__dict__[metric_cls](**metric_args)
             self.register_hook(metric_hook)
+
+    def register_logger_hooks(self, log_config):
+        import mmcv.runner.hooks as _hooks
+        log_interval = log_config["interval"]
+        for info in log_config['hooks']:
+            if info["type"] in logger.__dict__:
+                logger_hook = obj_from_dict(
+                    info, logger, default_args=dict(interval=log_interval))
+            else:
+                logger_hook = obj_from_dict(
+                    info, _hooks, default_args=dict(interval=log_interval))
+            self.register_hook(logger_hook, priority="VERY_LOW")
 
     def inject_runtime_hooks(self, interval, hooks, post_process):
         inject_hook = wrapper.InjectRuntimeHook(interval, hooks, post_process)

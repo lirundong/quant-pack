@@ -29,7 +29,7 @@ def _dist_train(cfg):
     trainer.register_qat_hooks(cfg.train.loss, cfg.train.metrics, cfg.train.lr_policies, cfg.train.qat_policies)
 
     if cfg.runtime_hooks:
-        trainer.inject_runtime_hooks(cfg.runtime_hooks)
+        trainer.inject_runtime_hooks(**cfg.runtime_hooks)
     if cfg.eval:
         trainer.register_eval_hooks(cfg.eval.metrics)
     if cfg.log:

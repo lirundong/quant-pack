@@ -22,12 +22,13 @@ def main():
                         help="manually setup random seed")
     args = parser.parse_args()
     cfg = qapi.build_cfg(args)
-    qapi.init_environment(cfg)
 
+    qapi.init_environment(cfg)
     if cfg.eval_only:
         qapi.eval_classifier(cfg)
     else:
         qapi.train_classifier(cfg)
+    qapi.finish_environment(cfg)
 
 
 if __name__ == "__main__":

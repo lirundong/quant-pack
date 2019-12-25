@@ -131,3 +131,9 @@ def init_environment(cfg):
     _init_dist_and_device(cfg)
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
+
+
+def finish_environment(cfg):
+    if cfg.distributed:
+        dist.barrier()
+    print(colorama.Style.RESET_ALL, flush=True)

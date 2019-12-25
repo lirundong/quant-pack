@@ -13,3 +13,4 @@ easydict
 tqdm
 deepmerge
 colorama
+matplotlib

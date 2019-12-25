@@ -197,7 +197,7 @@ class ParametrizedQuantWrapper(nn.Module):
     def batch_processor(model, data_batch, train_mode, device, quant_mode=None):
         if quant_mode is None:
             quant_mode = model.quant_mode
-        runtime_hooks = model.runtime_hooks
+        runtime_hooks = getattr(model, "runtime_hooks", {})
         img, label = data_batch
         outputs = {"label": label.to(device, non_blocking=True)}
         for i, mode in enumerate(quant_mode):

@@ -1,0 +1,18 @@
+__BASE__: configs/GQ_Nets/resnet18_base.yaml
+
+model:
+  name: resnet18
+  args:
+    pretrained: false
+    num_classes: 200
+
+runtime_hooks: null
+
+dataset:
+  name: ImageNetST
+  args:
+    img_dir: /mnt/lustre/share/images/
+    meta_dir: /mnt/lustre/lirundong/Data/Meta/imagenet_dev/
+    color: true
+
+work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-small-200/
