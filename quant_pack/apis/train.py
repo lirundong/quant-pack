@@ -22,11 +22,11 @@ def _dist_train(cfg):
     bn_folding_mapping = wrapper.track_bn_folding_mapping(model, torch.randn(*cfg.model.input_size))
     model = wrapper.__dict__[cfg.wrapper.name](model, bn_folding_mapping=bn_folding_mapping, **cfg.wrapper.args)
     model.module.to(cfg.device)
-    model.to_ddp(cfg.device)
 
     optims = model.get_optimizers(*cfg.train.optim_groups)
     trainer = runner.MultiOptimRunner(model, model.batch_processor, optims, cfg.work_dir)
-    trainer.register_qat_hooks(cfg.train.loss, cfg.train.metrics, cfg.train.lr_policies, cfg.train.qat_policies)
+    trainer.register_qat_hooks(cfg.train.loss, cfg.train.metrics, cfg.train.lr_policies,
+                               cfg.train.qat_policies, cfg.train.ckpt_interval)
 
     if cfg.runtime_hooks:
         trainer.inject_runtime_hooks(**cfg.runtime_hooks)
@@ -37,6 +37,7 @@ def _dist_train(cfg):
     if cfg.resume:
         trainer.resume(cfg.resume)
 
+    trainer.model.to_ddp()
     trainer.run([train_loader, eval_loader], item_to_tuple(*cfg.work_flow), cfg.epochs, device=cfg.device)
 
 

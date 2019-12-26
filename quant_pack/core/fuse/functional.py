@@ -21,9 +21,19 @@ else:
 
 
 def fused_conv_bn_forward(module, input):
-    # TODO: assertion of `input_transform` and `weight_transform`
     if module.input_transform is not None:
         input = module.input_transform(input)
+
+    if not module.fold_bn:
+        weight = module.weight
+        if module.weight_transform is not None:
+            weight = module.weight_transform(weight)
+        pre_activation = F.conv2d(input, weight, module.bias, module.stride,
+                                  module.padding, module.dilation, module.groups)
+        normed_activation = F.batch_norm(pre_activation, module.running_mean, module.running_var,
+                                         module.alpha, module.beta, module.training,
+                                         module.bn_momentum, module.bn_eps)
+        return normed_activation
 
     with torch.no_grad():
         if module.training:

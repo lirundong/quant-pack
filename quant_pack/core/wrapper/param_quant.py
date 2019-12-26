@@ -31,7 +31,7 @@ class ParametrizedQuantWrapper(nn.Module):
 
     _quantable_types = tuple(QUANT_FORWARD_FUNCTIONS.keys())
 
-    def __init__(self, module, quant_conf, bn_folding_mapping, fp_layers=None):
+    def __init__(self, module, quant_conf, bn_folding_mapping, do_fold_bn, fp_layers=None):
         """Model wrapper for parameterized-quantized training/evaluation.
 
         Args:
@@ -42,6 +42,7 @@ class ParametrizedQuantWrapper(nn.Module):
                 - align_zero:
             bn_folding_mapping (list[tuple]): mapping from `BN layer name` ->
                 `Conv/FC layer name`;
+            do_fold_bn (bool): whether actually do BN folding training/inference
             fp_layers (list[str], optional)
         """
         super(ParametrizedQuantWrapper, self).__init__()
@@ -53,14 +54,15 @@ class ParametrizedQuantWrapper(nn.Module):
 
         self.module = module
         self.quant_conf = quant_conf
+        self.quant_mode = None  # setup by qat_hooks later
         self._module_forward = module.__class__.forward
         self._quant_submodules = set()
         self._fused_submodules = set()
 
-        self._do_bn_folding(bn_folding_mapping)
+        self._do_bn_folding(bn_folding_mapping, do_fold_bn)
         self._register_quant_params(fp_layers)
 
-    def _do_bn_folding(self, bn_folding_mapping):
+    def _do_bn_folding(self, bn_folding_mapping, do_fold_bn):
         for (bn_name, conv_name) in bn_folding_mapping:
             bn_layer = _get_submodule(self.module, bn_name)
             conv_layer = _get_submodule(self.module, conv_name)
@@ -79,6 +81,7 @@ class ParametrizedQuantWrapper(nn.Module):
 
             # place holders, filled by pre_iter_hooks from m.*qconf later
             conv_layer.weight_transform = conv_layer.input_transform = None
+            conv_layer.fold_bn = do_fold_bn
             conv_layer.forward = MethodType(FUSED_FORWARD_FUNCTIONS[conv_layer.__class__], conv_layer)
             bn_layer.forward = MethodType(FUSED_FORWARD_FUNCTIONS[bn_layer.__class__], bn_layer)
 
@@ -108,9 +111,14 @@ class ParametrizedQuantWrapper(nn.Module):
                         m.weight_transform = m.input_transform = None
                         m.forward = MethodType(QUANT_FORWARD_FUNCTIONS[m.__class__], m)
 
-    def to_ddp(self, device):
+    def to_ddp(self, find_unused_parameters=True):
         assert dist.is_available() and dist.is_initialized()
-        self.module = DistributedDataParallel(self.module, device_ids=[device], find_unused_parameters=True)
+        if isinstance(self.module, DistributedDataParallel):
+            module_without_ddp = self.module.module
+        else:
+            module_without_ddp = self.module
+        self.module = DistributedDataParallel(module_without_ddp, device_ids=[torch.cuda.current_device()],
+                                              find_unused_parameters=find_unused_parameters)
 
     def to_torch_quant(self):
         raise NotImplementedError()

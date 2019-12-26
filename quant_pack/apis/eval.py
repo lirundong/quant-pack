@@ -21,7 +21,6 @@ def _dist_eval(cfg):
     bn_folding_mapping = wrapper.track_bn_folding_mapping(model, torch.randn(*cfg.model.input_size))
     model = wrapper.__dict__[cfg.wrapper.name](model, bn_folding_mapping=bn_folding_mapping, **cfg.wrapper.args)
     model.module.to(cfg.device)
-    model.to_ddp(cfg.device)
 
     evaluator = runner.MultiOptimRunner(model, model.batch_processor, work_dir=cfg.work_dir)
     evaluator.register_eval_hooks(cfg.eval.metrics)
@@ -33,6 +32,7 @@ def _dist_eval(cfg):
     if cfg.resume:
         evaluator.resume(cfg.resume, resume_optimizer=False)
 
+    model.to_ddp()
     evaluator.call_hook("before_run")
     evaluator.val(eval_loader, device=cfg.device, quant_mode=cfg.eval.quant_mode)
 

@@ -41,7 +41,7 @@ class MultiOptimRunner(Runner):
         else:
             return super(MultiOptimRunner, self).init_optimizer(optimizer)
 
-    def register_qat_hooks(self, loss, metrics, lr_policies, qat_policies):
+    def register_qat_hooks(self, loss, metrics, lr_policies, qat_policies, ckpt_interval=1):
         assert isinstance(loss, dict)
         assert isinstance(metrics, (tuple, list))
         assert isinstance(lr_policies, (tuple, list))
@@ -55,7 +55,7 @@ class MultiOptimRunner(Runner):
         # make sure loss firstly getting ready after `batch_processor`
         self.register_hook(loss, priority="HIGH")
         self.register_hook(IterTimerHook())
-        self.register_hook(CheckpointHook())
+        self.register_hook(CheckpointHook(interval=ckpt_interval))
 
         for hook in chain(metrics, qat_policies, lr_policies):
             self.register_hook(hook)

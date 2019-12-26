@@ -13,9 +13,10 @@ wrapper:
       mode: linear
       bit_width: 4
       align_zero: false
-    fp_layers:
-      - ((module|model).)*conv1
-      - ((module|model).)*fc
+    do_fold_bn: false
+    fp_layers: null
+#      - ((module|model).)*conv1
+#      - ((module|model).)*fc
 
 epochs: 120
 work_flow:
@@ -42,7 +43,7 @@ train:
         - .*
       optim_type: SGD
       args:
-        lr: 0.025
+        lr: 0.05
         momentum: 0.9
         weight_decay: !!float 1e-4
         nesterov: true
@@ -73,8 +74,9 @@ train:
       args:
         quant_mode: quant  # ("fp", "quant", "qw_fa", "fw_qa")
         granularity: epoch  # ("epoch", "iter")
+        always_enable_fp: true
         intervals: &q_intervals
-          - [10, 60]
+          - [25, 60]
           - [65, 90]
           - [95, -1]
     - name: ConstantVariable
@@ -85,7 +87,7 @@ train:
       args:
         name: kl_loss_weight
         value: 1.0
-        warmup_epochs: 5
+        warmup_iters: 2500
         intervals: *q_intervals
     - name: ConstantVariable
       args:
@@ -98,11 +100,12 @@ train:
           - *n_q
         alter_freq: 1
         intervals: *q_intervals
+  ckpt_interval: 1
 
 eval:
   data_loader:
     args:
-      batch_size: 128
+      batch_size: 32
       shuffle: false
       pin_memory: true
       num_workers: 1
@@ -121,27 +124,27 @@ runtime_hooks:
   interval: 50
   hooks:
     - name: &fp_act fp_activations
-      type: SaveActivation
+      type: SaveAllValue
       args:
         target_cls: (Conv[\d]d|Linear)
         inject_at_mode: fp
     - name: &quant_act quant_activations
-      type: SaveActivation
+      type: SaveAllValue
       args:
         target_cls: (Conv[\d]d|Linear)
         inject_at_mode: quant
   post_process:
-    - name: cos_distance
-      type: CosineDistance
+    - name: relative_error_vis
+      type: RelativeErrorPostProcess
       args:
         apply_to:
           - *fp_act
           - *quant_act
 
 log:
-  interval: 100
+  interval: 50
   hooks:
-    - type: TextLoggerHook
+#    - type: TextLoggerHook
     - type: EnhancedTBLoggerHook
 
 dataset:
@@ -152,5 +155,6 @@ dataset:
     color: true
 
 work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-base/
-pre_trained: null # /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
-resume: null
+# torchvision pre-trained: /mnt/lustre/lirundong/Data/torchvision/resnet18-5c106cde.pth
+pre_trained: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-base/clean_ckpt/pre_trained.pth
+resume: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-base/clean_ckpt/resume.pth

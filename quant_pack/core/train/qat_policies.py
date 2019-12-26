@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from torch.nn.parallel import DistributedDataParallel
+
 from typing import List, Tuple, Optional
 from mmcv.runner import Hook, Runner
 
@@ -22,7 +24,7 @@ class EnableQuantAtIntervals(Hook):
     def __init__(self, quant_mode: str, granularity: str, intervals: IntervalT, always_enable_fp: bool = False):
         assert quant_mode in VALID_QUANT_MODE
         assert granularity in VALID_GRANULARITY
-        if always_enable_fp:
+        if always_enable_fp and quant_mode != "fp":
             quant_mode = (quant_mode, "fp")
         else:
             quant_mode = (quant_mode,)
@@ -30,42 +32,54 @@ class EnableQuantAtIntervals(Hook):
         self.granularity = granularity
         self.intervals = intervals
 
+    def _switch_quant_mode(self, runner):
+        if _in_intervals(runner.epoch, self.intervals):
+            quant_mode = self.quant_mode
+        else:
+            quant_mode = ("fp",)
+        if runner.model.quant_mode != quant_mode and isinstance(runner.model.module, DistributedDataParallel):
+            runner.model.module.find_unused_parameters = "quant" not in quant_mode
+        runner.model.quant_mode = quant_mode
+
     def before_train_epoch(self, runner: Runner):
         if self.granularity == "epoch":
-            if _in_intervals(runner.epoch, self.intervals):
-                runner.model.quant_mode = self.quant_mode
-            else:
-                runner.model.quant_mode = ("fp",)
+            self._switch_quant_mode(runner)
 
     def before_train_iter(self, runner: Runner):
         if self.granularity == "iter":
-            if _in_intervals(runner.iter, self.intervals):
-                runner.model.quant_mode = self.quant_mode
-            else:
-                runner.model.quant_mode = ("fp",)
+            self._switch_quant_mode(runner)
 
 
 class IntervalWarmupedVariable(Hook):
 
-    def __init__(self, name, value, warmup_epochs, intervals):
+    def __init__(self, name, value, warmup_iters, intervals):
         self.name = name
         self.target_value = value
-        self.warmup_epochs = warmup_epochs
+        self.warmup_iters = warmup_iters
         self.intervals = intervals
-        self.warmup_intervals = [(a, min(a + warmup_epochs, b)) for (a, b) in intervals]
 
     def before_run(self, runner: Runner):
         if not hasattr(runner, "named_vars"):
             runner.named_vars = dict()
 
+    def before_train_epoch(self, runner):
+        current_interval = _in_intervals(runner.epoch, self.intervals)
+        if current_interval:
+            iters_per_epoch = len(runner.data_loader)
+            warmup_start_iter = current_interval[0] * iters_per_epoch
+            warmup_done_iter = warmup_start_iter + self.warmup_iters
+        else:
+            warmup_start_iter = warmup_done_iter = None
+        self.warmup_start_iter = warmup_start_iter
+        self.warmup_done_iter = warmup_done_iter
+        self.value_enabled = current_interval is not None
+        self.warmup_delta = self.target_value / self.warmup_iters
+
     def before_train_iter(self, runner: Runner):
-        if _in_intervals(runner.epoch, self.intervals):
-            warmup_interval = _in_intervals(runner.epoch, self.warmup_intervals)
-            if warmup_interval:
-                iters_per_epoch = len(runner.data_loader)
-                delta = self.target_value / self.warmup_epochs / iters_per_epoch
-                gone_iters = (runner.epoch - warmup_interval[0]) * iters_per_epoch + runner.inner_iter
-                runner.named_vars[self.name] = delta * gone_iters
+        if self.value_enabled:
+            if runner.iter < self.warmup_done_iter:
+                gone_iters = runner.iter - self.warmup_start_iter
+                runner.named_vars[self.name] = self.warmup_delta * gone_iters
             else:
                 runner.named_vars[self.name] = self.target_value
         else:

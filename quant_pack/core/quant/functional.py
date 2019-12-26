@@ -24,4 +24,9 @@ def quant_conv2d_forward(module, input):
 
 
 def quant_linear_forward(module, input):
-    raise NotImplementedError()
+    if module.input_transform is not None:
+        input = module.input_transform(input)
+    weight = module.weight
+    if module.weight_transform is not None:
+        weight = module.weight_transform(weight)
+    return F.linear(input, weight, module.bias)

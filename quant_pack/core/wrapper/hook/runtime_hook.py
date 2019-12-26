@@ -4,16 +4,18 @@ from collections import OrderedDict
 
 from mmcv.runner import Hook
 
-from .activation_builder import SaveActivationBuilder
-from .activation_post_process import CosineDistancePostProcess
+from .activation_builder import SaveActivationBuilder, SaveAllValueBuilder
+from .activation_post_process import CosineDistancePostProcess, RelativeErrorPostProcess
 
 # TODO: refactor these registries to class decorators
 BUILDERS = {
     SaveActivationBuilder.__name__: SaveActivationBuilder,
+    SaveAllValueBuilder.__name__: SaveAllValueBuilder,
 }
 
 POST_PROCESS = {
     CosineDistancePostProcess.__name__: CosineDistancePostProcess,
+    RelativeErrorPostProcess.__name__: RelativeErrorPostProcess,
 }
 
 
