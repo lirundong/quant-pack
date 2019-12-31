@@ -22,4 +22,4 @@ LR-Nets | [Shayer et al. ICLR 2018](https://openreview.net/forum?id=BySRH6CpW) |
 Feature Denoising | [Xie et al. CVPR 2019](https://arxiv.org/abs/1812.03411) | [`NonLocal`](quant_pack/deprecated/models/variational/_components.py)
 
 ## License
-`quant-prob` is distributed under Anti-996 license (V1.0, draft). See [LICENSE](LICENSE) for details.
+`quant-pack` is distributed under Anti-996 license (V1.0, draft). See [LICENSE](LICENSE) for details.

@@ -5,6 +5,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from terminaltables import GithubFlavoredMarkdownTable
 
 
 class CosineDistancePostProcess:
@@ -45,9 +46,9 @@ def conv2d_input_weight_analysis(input_err, weight_err, kernel_size,
     target_shape = (batch_size, num_channels, num_output_spatial, num_receptive)
     ie_unfold = ie_unfold.permute(0, 2, 1) \
         .reshape(batch_size, 1, num_output_spatial, num_receptive) \
-        .expand(*target_shape)
+        .expand(*target_shape).contiguous()
     we_unfold = we_unfold.reshape(1, num_channels, 1, num_receptive) \
-        .expand(*target_shape)
+        .expand(*target_shape).contiguous()
     error_unfold = torch.cat([ie_unfold, we_unfold], dim=-1)
     error_mean = torch.mean(error_unfold, dim=-1)
     error_std = torch.std(error_unfold, dim=-1)
@@ -68,12 +69,168 @@ def fc_input_weight_analysis(input_err, weight_err):
     return error_mean, error_std
 
 
+def unpack_indices(indices):
+    # indices: [N, z], where z the dimension of original tensor
+    return tuple(idx.squeeze(1) for idx in indices.split(1, 1))
+
+
+def get_abnormal_indices(x, y, x_cond, y_cond, k=10, sort_by="y"):
+    valid_idx = torch.nonzero(x_cond(x) & y_cond(y))
+    valid_idx = unpack_indices(valid_idx)  # equivalent to `as_tuple=True` in PyTorch-1.3
+    if sort_by == "y":
+        abnormal_values = y[valid_idx]
+    else:
+        abnormal_values = x[valid_idx]
+    _, topk_idx = torch.topk(abnormal_values, k=k)
+    valid_topk_idx = tuple(idx[topk_idx] for idx in valid_idx)
+    topk_x = x[valid_idx][topk_idx]
+    topk_y = y[valid_idx][topk_idx]
+    return valid_topk_idx, topk_x, topk_y
+
+
+def unfold_conv2d_inputs(*inputs, **conv_params):
+    input_shape = inputs[0].shape
+    ret = []
+    for input in inputs:
+        assert input.shape == input_shape
+        ret.append(F.unfold(input, **conv_params))
+    return ret
+
+
+def unfold_conv2d_weights(*weights):
+    c_out = weights[0].size(0)
+    w_shape = weights[0].shape
+    ret = []
+    for weight in weights:
+        assert weight.shape == w_shape
+        ret.append(weight.reshape(c_out, -1))
+    return ret
+
+
+def select_conv2d_inputs(n_idx, spatial_idx, *inputs):
+    ret = []
+    for input in inputs:
+        assert input.dim() == 3, "please unfold inputs before selection"
+        selected = input[n_idx, :, spatial_idx]
+        ret.append(selected)
+    return ret
+
+
+def select_fc_inputs(n_idx, *inputs):
+    ret = []
+    for input in inputs:
+        ret.append(input[n_idx, ...])
+    return ret
+
+
+def select_weights(c_out_idx, *weights):
+    ret = []
+    for weight in weights:
+        ret.append(weight[c_out_idx, ...])
+    return ret
+
+
+def select_topk_by_reference(k, ref, *srcs, dim=-1):
+    # input shape: [prev_k, target_dim]
+    _, topk_idx = torch.topk(ref, k, dim=dim)  # topk_idx: [prev_k, k]
+    ret = []
+    for src in srcs:
+        src_topk = torch.gather(src, dim, topk_idx)
+        ret.append(src_topk)
+    return ret
+
+
+def fetch_abnormal_topk_inputs_weights(output_index, output_w, input_err, weight_err, input_fp, weight_fp,
+                                       input_q, weight_q, module_type, k=3, **op_params):
+    assert module_type in ("Conv2d", "Linear")
+    if module_type == "Conv2d":
+        # output_idx: [prev_k, 4]
+        # input: [batch_size, num_receptive (c_in * k_h * k_w), num_output_spatial (H * W)]
+        # weight: [c_out, num_receptive]
+        input_err, input_fp, input_q = unfold_conv2d_inputs(input_err, input_fp, input_q, **op_params)
+        weight_err, weight_fp, weight_q = unfold_conv2d_weights(weight_err, weight_fp, weight_q)
+        n_idx, c_out_idx, y, x = output_index  # each index is 1d tensor with length=`k` in `get_abnormal_indices`
+        spatial_idx = y * output_w + x
+        # selected input/weight size: [prev_k, num_receptive]
+        input_err, input_fp, input_q = select_conv2d_inputs(n_idx, spatial_idx, input_err, input_fp, input_q)
+    elif module_type == "Linear":
+        n_idx, c_out_idx = output_index
+        input_err, input_fp, input_q = select_fc_inputs(n_idx, input_err, input_fp, input_q)
+    weight_err, weight_fp, weight_q = select_weights(c_out_idx, weight_err, weight_fp, weight_q)
+    # select topk receptive elements form input/weights
+    input_fp, input_q = select_topk_by_reference(k, input_err, input_fp, input_q)
+    weight_fp, weight_q = select_topk_by_reference(k, weight_err, weight_fp, weight_q)
+    return input_fp, input_q, weight_fp, weight_q
+
+
+def format_1d_tensor(x):
+    if torch.is_tensor(x):
+        assert x.dim() == 1
+        x = x.numpy()
+    return "(" + ", ".join(f"{v:.5f}" for v in x) + ")"
+
+
+def format_1d_tensors(*xs):
+    ret = []
+    for x in xs:
+        ret.append(format_1d_tensor(x))
+    return ret
+
+
+def tensor_to_table(**named_values):
+    # header = ["input_err_mean", "output_err", "input_fp", "input_q", "weight_fp", "weight_q"]
+    header = []
+    body = []
+    values = []
+    n = None
+    for name, value in named_values.items():
+        assert torch.is_tensor(value)
+        if value.dim() > 1:
+            topk = value.size(1)
+            name += f"@top{topk}"
+        header.append(name)
+        values.append(value)
+        if n is None:
+            n = value.size(0)
+        else:
+            assert value.size(0) == n
+    for i in range(n):
+        line = []
+        for value in values:
+            if value[i].numel() == 1:
+                line.append(f"{value[i].item():.5f}")
+            else:
+                line.append(format_1d_tensor(value[i]))
+        body.append(line)
+    body.insert(0, header)
+    table = GithubFlavoredMarkdownTable(body)
+    return table.table
+
+
+def scalar_to_table(**named_values):
+    header = []
+    body = []
+    for name, value in named_values.items():
+        header.append(name)
+        body.append(f"{value:.5f}")
+    table = GithubFlavoredMarkdownTable([header, body])
+    return table.table
+
+
 class RelativeErrorPostProcess:
 
-    def __init__(self, apply_to):
+    def __init__(self, apply_to, abnormal_x_ub=None, abnormal_y_lb=None, out_err_topn=10, in_err_topk=3):
         assert len(apply_to) == 2, "currently we only support pair-wise comparison"
         # the first registry is reference, second contains outputs with error
         self.apply_to = apply_to
+        # currently we only filter (small x error, large y error) points
+        self.out_err_topn = out_err_topn
+        self.in_err_topk = in_err_topk
+        if abnormal_x_ub is not None or abnormal_y_lb is not None:
+            self.x_cond = lambda x: x < abnormal_x_ub
+            self.y_cond = lambda y: abnormal_y_lb <= y
+        else:
+            self.x_cond = self.y_cond = None
 
     def after_iter(self, input_reg):
         ref_reg = input_reg[self.apply_to[0]]
@@ -99,4 +256,33 @@ class RelativeErrorPostProcess:
                 "input_error": input_err,
                 "output_error": output_err,
             }
+
+            if self.x_cond or self.y_cond:
+                abnormal_indices, abnormal_input_err_mean, abnormal_output_err = \
+                    get_abnormal_indices(input_err_mean, output_err, self.x_cond, self.y_cond, self.out_err_topn)
+                output_w = output_err.size(3) if module_type == "Conv2d" else None
+                abnormal_x_fp, abnormal_x_q, abnormal_w_fp, abnormal_w_q = \
+                    fetch_abnormal_topk_inputs_weights(abnormal_indices, output_w,
+                                                       input_err, weight_err,
+                                                       ref_reg[k]["input"], ref_reg[k]["weight"],
+                                                       with_err_reg[k]["input"], with_err_reg[k]["weight"],
+                                                       module_type, self.in_err_topk, **ref_reg[k].get("param", {}))
+                abnormal_report = tensor_to_table(
+                    input_err_mean=abnormal_input_err_mean,
+                    output_err=abnormal_output_err,
+                    output_fp=ref_reg[k]["output"][abnormal_indices],
+                    output_q=with_err_reg[k]["output"][abnormal_indices],
+                    input_fp=abnormal_x_fp,
+                    input_q=abnormal_x_q,
+                    weight_fp=abnormal_w_fp,
+                    weight_q=abnormal_w_q,
+                )
+                x_lb, x_ub, x_delta = with_err_reg[k]["input_qconf"]
+                w_lb, w_ub, w_delta = with_err_reg[k]["weight_qconf"]
+                qconf_report = scalar_to_table(
+                    x_lb=x_lb, x_ub=x_ub, x_delta=x_delta,
+                    w_lb=w_lb, w_ub=w_ub, w_delta=w_delta,
+                )
+                per_layer_err[k]["abnormal_report"] = abnormal_report
+                per_layer_err[k]["qconf_report"] = qconf_report
         return per_layer_err

@@ -6,15 +6,18 @@ from collections import OrderedDict
 
 import torch
 
+_cleanup_info = \
+    "Note that due to `deep_copy` in previous implementations, modules are " \
+    "part of the old pickle, so you have to include previous codebase in " \
+    "PYTHONPATH when calling this tool with `--clean`."
+
 
 def main():
     parser = ArgumentParser("`quant-pack` CLI for upgrading checkpoints form previous versions.")
     parser.add_argument("--input", "-i", required=True, help="path of input checkpoint")
     parser.add_argument("--output", "-o", required=True, help="output directory for upgraded checkpoint")
     parser.add_argument("--clean", action="store_true",
-                        help="cleanup unnecessary pickles in input checkpoint. Note that due to `deep_copy` in "
-                             "previous implementations, modules are part of the pickle, so you have to include "
-                             "previous codebase in PYTHONPATH when calling this tool with `--clean`.")
+                        help="cleanup unnecessary pickles in input checkpoint." + _cleanup_info)
     args = parser.parse_args()
     if args.clean:
         raise NotImplementedError("`--clean` is not ready yet")

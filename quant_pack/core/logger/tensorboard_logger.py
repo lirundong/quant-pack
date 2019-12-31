@@ -58,26 +58,28 @@ def plot_hist_with_log_scale(x, title=None):
     ax = f.gca()
     x, = to_np_array(x)
     ax.hist(x.reshape(-1), bins=128)
-    plt.yscale("log", basey=10)
+    ax.set_yscale("log", basey=10)
     if title:
         ax.set_title(title)
     plt.tight_layout()
     return f
 
 
-def plot_xy_scatter(x, y, xlabel=None, ylabel=None, title=None):
+def plot_xy_scatter(x, y, xlabel=None, ylabel=None, title=None, logscale=False):
     assert x.numel() == y.numel()
     f = plt.figure(figsize=(3, 3), dpi=300)
     ax = f.gca()
     x, y = to_np_array(x, y)
     ax.scatter(x.reshape(-1), y.reshape(-1), marker="+")
+    if logscale:
+        ax.set_xscale("log", basex=10)
+        ax.set_yscale("log", basey=10)
     if title:
         ax.set_title(title)
     if xlabel:
         ax.set_xlabel(xlabel)
     if ylabel:
         ax.set_ylabel(ylabel)
-    ax.ticklabel_format(style="sci")
     plt.tight_layout()
     return f
 
@@ -103,6 +105,12 @@ class EnhancedTBLoggerHook(TensorboardLoggerHook):
                         tag = f"input_error_hist/{layer_name}"
                         fig_hist = plot_hist_with_log_scale(input_err, title=layer_name)
                         self.writer.add_figure(tag, fig_hist, runner.iter)
+
+                        reports = [k for k in err_dict.keys() if k.endswith("_report")]
+                        for report in reports:
+                            text = err_dict[report]
+                            tag = f"{report}/{layer_name}"
+                            self.writer.add_text(tag, text, runner.iter)
 
                 else:  # layer-wise cosine distance
                     x, y = pair_to_seq(*plot_data)

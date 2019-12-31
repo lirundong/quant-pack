@@ -33,3 +33,17 @@ class QuantConfig:
             return lambda x: self._quantizer(x, self.lb, self.ub, self.bit_width, self.align_zero)
         else:
             return None
+
+    @property
+    def params(self):
+        if self.align_zero:
+            # return scale (float), zero_point (int), dtype (torch.uint8 / torch.int8)
+            raise NotImplementedError()
+        else:
+            lb, ub = self.lb.item(), self.ub.item()
+            delta = (ub - lb) / (2 ** self.bit_width - 1)
+            return lb, ub, delta
+
+    @property
+    def enabled(self):
+        return self._enabled
