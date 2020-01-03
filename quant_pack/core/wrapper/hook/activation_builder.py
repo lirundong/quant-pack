@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import re
+from collections import OrderedDict
 
 import torch
 import torch.nn as nn
@@ -8,19 +9,15 @@ import torch.nn as nn
 from .base_builder import HookBuilder
 
 
-def copy_to_cpu(*args):
-    ret = []
+def copy_to_cpu(x):
     cpu = torch.device("cpu")
-    for arg in args:
-        arg = arg.detach().to(cpu).clone()
-        ret.append(arg)
-    return ret
+    return x.detach().to(cpu).clone()
 
 
 class SaveActivationBuilder(HookBuilder):
 
     def __init__(self, hook_reg, target_cls, inject_at_mode):
-        super(SaveActivationBuilder, self).__init__(phase="forward", hook_reg=hook_reg)
+        super(SaveActivationBuilder, self).__init__(phases=("forward_pre", "forward"), hook_reg=hook_reg)
         self.target_cls = re.compile(target_cls)
         self.inject_at_mode = inject_at_mode
         self.name_reg = {}
@@ -35,6 +32,10 @@ class SaveActivationBuilder(HookBuilder):
     def inject_at(self, quant_mode):
         return quant_mode == self.inject_at_mode
 
+    def _runtime_forward_pre_hook(self, module, input):
+        module.gather_data = True
+        module.gather_buffer = OrderedDict()
+
     def _runtime_forward_hook(self, module, input, output):
         output = copy_to_cpu(output)
         name = self.name_reg[id(module)]
@@ -44,21 +45,8 @@ class SaveActivationBuilder(HookBuilder):
 class SaveAllValueBuilder(SaveActivationBuilder):
 
     def _runtime_forward_hook(self, module, input, output):
-        if isinstance(input, tuple):
-            assert len(input) == 1
-            input = input[0]
-        # TODO: handle BN-folding here
-        weight = module.weight
-        if module.input_transform is not None:
-            input = module.input_transform(input)
-        if module.weight_transform is not None:
-            weight = module.weight_transform(weight)
-        input, output, weight = copy_to_cpu(input, output, weight)
         name = self.name_reg[id(module)]
         self._reg[name] = {
-            "input": input,
-            "output": output,
-            "weight": weight,
             "type": module.__class__.__name__,
             "input_qconf": module.input_qconf.params,
             "weight_qconf": module.weight_qconf.params,
@@ -70,3 +58,8 @@ class SaveAllValueBuilder(SaveActivationBuilder):
                 "padding": module.padding,
                 "stride": module.stride,
             }
+        for k, v in module.gather_buffer.items():
+            v = copy_to_cpu(v)
+            self._reg[name][k] = v
+        module.gather_buffer.clear()
+        module.gather_data = False

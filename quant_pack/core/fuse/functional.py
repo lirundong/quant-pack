@@ -33,6 +33,11 @@ def fused_conv_bn_forward(module, input):
         normed_activation = F.batch_norm(pre_activation, module.running_mean, module.running_var,
                                          module.alpha, module.beta, module.training,
                                          module.bn_momentum, module.bn_eps)
+        # TODO: remove the ad-hoc here
+        if getattr(module, "gather_data", None):
+            module.gather_buffer["input"] = input.detach()
+            module.gather_buffer["weight"] = weight.detach()
+            module.gather_buffer["output"] = pre_activation.detach()
         return normed_activation
 
     with torch.no_grad():

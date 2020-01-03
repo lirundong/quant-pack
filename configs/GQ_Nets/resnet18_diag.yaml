@@ -1,0 +1,38 @@
+__BASE__: configs/GQ_Nets/resnet18_base.yaml
+
+wrapper:
+  args:
+    quant_conf:
+      prune_to_zero: true
+
+runtime_hooks:
+  interval: -1
+  hooks:
+    - name: &fp_act fp_activations
+      type: SaveAllValue
+      args:
+        target_cls: (Conv[\d]d|Linear)
+        inject_at_mode: fp
+    - name: &quant_act quant_activations
+      type: SaveAllValue
+      args:
+        target_cls: (Conv[\d]d|Linear)
+        inject_at_mode: quant
+  post_process:
+    - name: relative_error_vis
+      type: RelativeErrorPostProcess
+      args:
+        apply_to:
+          - *fp_act
+          - *quant_act
+        abnormal_x_ub: 1.0
+        abnormal_y_lb: 10.0
+
+log:
+  interval: -1
+  hooks:
+    - type: EnhancedTBLoggerHook
+
+work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-prune-to-zero-range10-with-err-trans-info/
+pre_trained: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-base/clean_ckpt/pre_trained.pth  # model weights
+resume: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-base/clean_ckpt/resume.pth  # quant params

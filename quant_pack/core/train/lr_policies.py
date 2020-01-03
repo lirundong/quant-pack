@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 
 import torch.distributed as dist
+from torch.optim.optimizer import Optimizer
 from mmcv.runner import LrUpdaterHook
 
 
 def _get_applied_param_groups(runner, apply_to):
+    if isinstance(runner.optimizer, Optimizer):
+        return runner.optimizer.param_groups
     param_groups = []
     for optim in (runner.optimizer[name] for name in apply_to):
         param_groups += optim.param_groups

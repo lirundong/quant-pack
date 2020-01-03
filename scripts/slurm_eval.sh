@@ -26,7 +26,7 @@ GLOG_vmodule=MemcachedClient=-1 srun \
   --mpi=pmi2 \
   --kill-on-bad-exit=1 \
 python $ROOT/tools/train_val_classifier.py \
-  --config $ROOT/configs/GQ_Nets/${CONF} \
+  --config $ROOT/configs/${CONF} \
   --port $(shuf -i 12000-20000 -n 1) \
   --distributed \
   --eval-only

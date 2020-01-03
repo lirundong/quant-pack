@@ -65,12 +65,18 @@ def plot_hist_with_log_scale(x, title=None):
     return f
 
 
-def plot_xy_scatter(x, y, xlabel=None, ylabel=None, title=None, logscale=False):
+def plot_xy_scatter(x, y, xrange=None, yrange=None, xlabel=None, ylabel=None, title=None, logscale=False):
     assert x.numel() == y.numel()
     f = plt.figure(figsize=(3, 3), dpi=300)
     ax = f.gca()
+    if xrange:
+        m = (xrange[0] < x) & (x < xrange[1])
+        x, y = x[m], y[m]
+    if yrange:
+        m = (yrange[0] < y) & (y < yrange[1])
+        x, y = x[m], y[m]
     x, y = to_np_array(x, y)
-    ax.scatter(x.reshape(-1), y.reshape(-1), marker="+")
+    ax.scatter(x.reshape(-1), y.reshape(-1), marker="+", linewidths=1)
     if logscale:
         ax.set_xscale("log", basex=10)
         ax.set_yscale("log", basey=10)
@@ -82,6 +88,12 @@ def plot_xy_scatter(x, y, xlabel=None, ylabel=None, title=None, logscale=False):
         ax.set_ylabel(ylabel)
     plt.tight_layout()
     return f
+
+
+def plot_3d_hist_of_filters(tb_writer, data, label):
+    assert torch.is_tensor(data) and data.dim() > 1
+    for i, filter in enumerate(data):
+        tb_writer.add_histogram(label, filter.reshape(-1), i)
 
 
 class EnhancedTBLoggerHook(TensorboardLoggerHook):
@@ -98,6 +110,7 @@ class EnhancedTBLoggerHook(TensorboardLoggerHook):
                         output_err = err_dict["output_error"]
                         tag = f"input_output_error/{layer_name}"
                         fig_scatter = plot_xy_scatter(input_err_mean, output_err,
+                                                      xrange=(-10., 10.), yrange=(-10., 10.),  # TODO: remove this ad-hoc
                                                       xlabel="input_error_mean", ylabel="output_error",
                                                       title=layer_name)
                         self.writer.add_figure(tag, fig_scatter, runner.iter)
@@ -111,6 +124,13 @@ class EnhancedTBLoggerHook(TensorboardLoggerHook):
                             text = err_dict[report]
                             tag = f"{report}/{layer_name}"
                             self.writer.add_text(tag, text, runner.iter)
+
+                        if "weight" in err_dict:
+                            label = f"weight/{layer_name}"
+                            plot_3d_hist_of_filters(self.writer, err_dict["weight"], label)
+                        if "weight_error" in err_dict:
+                            label = f"weight_error/{layer_name}"
+                            plot_3d_hist_of_filters(self.writer, err_dict["weight_error"], label)
 
                 else:  # layer-wise cosine distance
                     x, y = pair_to_seq(*plot_data)

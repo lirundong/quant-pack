@@ -3,9 +3,11 @@
 
 class HookBuilder:
 
-    def __init__(self, phase, hook_reg):
-        assert phase in ("forward", "forward_pre", "backward")
-        self._phase = phase
+    def __init__(self, phases, hook_reg):
+        if isinstance(phases, str):
+            phases = (phases, )
+        assert all(phase in ("forward", "forward_pre", "backward") for phase in phases)
+        self._phases = phases
         self._reg = hook_reg
 
     def _runtime_forward_hook(self, module, input, output):
@@ -23,11 +25,13 @@ class HookBuilder:
     def inject_at(self, *args, **kwargs):
         raise NotImplementedError()
 
-    def get_hook(self):
-        if self._phase is "forward":
-            return "register_forward_hook", self._runtime_forward_hook
-        elif self._phase is "forward_pre":
-            return "register_forward_pre_hook", self._runtime_forward_pre_hook
-        elif self._phase is "backward":
-            return "register_backward_hook", self._runtime_backward_hook
-        raise RuntimeError(f"invalid hooking phase: {self._phase}")
+    def get_hooks(self):
+        ret = []
+        for phase in self._phases:
+            if phase == "forward":
+                ret.append(("register_forward_hook", self._runtime_forward_hook))
+            elif phase == "forward_pre":
+                ret.append(("register_forward_pre_hook", self._runtime_forward_pre_hook))
+            elif phase == "backward":
+                ret.append(("register_backward_hook", self._runtime_backward_hook))
+        return ret

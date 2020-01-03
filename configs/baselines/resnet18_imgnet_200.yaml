@@ -4,6 +4,7 @@ model:
   name: resnet18
   args:
     pretrained: false
+    num_classes: 200
   input_size: [1, 3, 224, 224]
 
 wrapper:
@@ -14,7 +15,7 @@ wrapper:
       bit_width: 4
       align_zero: false
     do_fold_bn: false
-    fp_layers: null # list with item like: ((module|model).)*conv1
+    fp_layers: null
 
 epochs: 120
 work_flow:
@@ -29,19 +30,12 @@ train:
       pin_memory: true
       num_workers: 2
   optim_groups:
-    - name: &n_q quant_params
-      matches:
-        - .*(_lb|_ub)$
-      optim_type: Adam
-      args:
-        lr: !!float 1e-3
-        weight_decay: 0.0
     - name: &n_w weight_params
       matches:
         - .*
       optim_type: SGD
       args:
-        lr: 0.025
+        lr: 0.05
         momentum: 0.9
         weight_decay: !!float 1e-4
         nesterov: true
@@ -53,57 +47,36 @@ train:
       args:
         logits_names:
           - fp
-          - quant
         topk: [1, 5]
   lr_policies:
     - name: StepMultiOptim
       args:
         gamma: 0.1
-        step: [60, 90]
+        step: [60, 95]
         warmup: linear
-        warmup_iters: 2500  # ~4 epochs on b2048 setting
-        warmup_ratio: 0.25
+        warmup_iters: 750  # ~4 epochs on b64x8 setting
+        warmup_ratio: 0.5  # starts from 0.2
         scale_by_world_size: true
         by_epoch: true
         apply_to:
           - *n_w
   qat_policies:
-    - name: EnableQuantAtIntervals
+    - name: SetupQuantOnce
       args:
-        quant_mode: quant  # ("fp", "quant", "qw_fa", "fw_qa")
-        granularity: epoch  # ("epoch", "iter")
-        always_enable_fp: true
-        intervals: &q_intervals
-          - [25, 60]
-          - [65, 90]
-          - [95, -1]
+        quant_mode: fp
     - name: ConstantVariable
       args:
         name: ce_loss_weight
         value: 1.0
-    - name: IntervalWarmupedVariable
+    - name: Optimizer
       args:
-        name: kl_loss_weight
-        value: 1.0
-        warmup_iters: 2500
-        intervals: *q_intervals
-    - name: ConstantVariable
-      args:
-        name: kl_temperature
-        value: 1.0
-    - name: OptimAlterStep
-      args:
-        apply_to:
-          - *n_w
-          - *n_q
-        alter_freq: 1
-        intervals: *q_intervals
+        grad_clip: null
   ckpt_interval: 1
 
 eval:
   data_loader:
     args:
-      batch_size: 64
+      batch_size: 32
       shuffle: false
       pin_memory: true
       num_workers: 1
@@ -112,16 +85,14 @@ eval:
       args:
         logits_names:
           - fp
-          - quant
         topk: [1, 5]
   quant_mode:
     - fp
-    - quant
 
 runtime_hooks: null
 
 log:
-  interval: 200
+  interval: 50
   hooks:
     - type: TextLoggerHook
     - type: EnhancedTBLoggerHook
@@ -130,9 +101,9 @@ dataset:
   name: ImageNetST
   args:
     img_dir: /mnt/lustre/share/images/
-    meta_dir: /mnt/lustre/share/images/meta/
+    meta_dir: /mnt/lustre/lirundong/Data/Meta/imagenet_dev/
     color: true
 
-work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-base/
+work_dir: /mnt/lustre/lirundong/Workspace/baselines/res18-imgnet-200/
 pre_trained: null
-resume: null
+resume: /mnt/lustre/lirundong/Workspace/baselines/res18-imgnet-200/epoch_90.pth

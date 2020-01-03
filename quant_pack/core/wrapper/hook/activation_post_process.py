@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import itertools
 from collections import OrderedDict
 
 import torch
@@ -207,14 +208,31 @@ def tensor_to_table(**named_values):
     return table.table
 
 
-def scalar_to_table(**named_values):
+def scalar_to_table(fmt="horizontal", **named_values):
+    assert fmt in ("horizontal", "vertical")
     header = []
     body = []
-    for name, value in named_values.items():
-        header.append(name)
-        body.append(f"{value:.5f}")
-    table = GithubFlavoredMarkdownTable([header, body])
+    if fmt == "horizontal":
+        for name, value in named_values.items():
+            header.append(name)
+            body.append(f"{value:.5f}")
+        table = [header, body]
+    else:
+        header = ["item", "value"]
+        for name, value in named_values.items():
+            if not isinstance(value, str):
+                value = f"{value:.5f}"
+            body.append([name, value])
+        body.insert(0, header)
+        table = body
+    table = GithubFlavoredMarkdownTable(table)
     return table.table
+
+
+def pairwise(iterable):
+    a, b = itertools.tee(iterable)
+    next(b, None)
+    return zip(a, b)
 
 
 class RelativeErrorPostProcess:
@@ -255,6 +273,8 @@ class RelativeErrorPostProcess:
                 "input_error_std": input_err_std,
                 "input_error": input_err,
                 "output_error": output_err,
+                # "weight_error": weight_err,
+                # "weight": ref_reg[k]["weight"],
             }
 
             if self.x_cond or self.y_cond:
@@ -285,4 +305,23 @@ class RelativeErrorPostProcess:
                 )
                 per_layer_err[k]["abnormal_report"] = abnormal_report
                 per_layer_err[k]["qconf_report"] = qconf_report
+
+        # pair-wise output-input error analysis
+        for k1, k2 in pairwise(ref_reg.keys()):
+            output_err = per_layer_err[k1]["output_error"].reshape(-1)
+            input_err = per_layer_err[k2]["input_error"].reshape(-1)
+            if ref_reg[k1]["type"] == ref_reg[k2]["type"]:
+                assert output_err.shape == input_err.shape, f"{k1} -> {k2} do not match"
+            else:
+                assert output_err.numel() == input_err.numel(), f"{k1} -> {k2} do not match"
+            transport_report = scalar_to_table(
+                fmt="vertical",
+                prev_out_err_norm=torch.norm(output_err).item(),
+                current_in_err_norm=torch.norm(input_err).item(),
+                prev_out_err_var=torch.var(output_err).item(),
+                current_in_err_var=torch.var(input_err).item(),
+                cosine_dist=F.cosine_similarity(output_err, input_err, dim=0).item(),
+            )
+            per_layer_err[k2]["trans_err_report"] = transport_report
+
         return per_layer_err

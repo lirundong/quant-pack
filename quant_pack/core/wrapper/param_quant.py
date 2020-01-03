@@ -4,6 +4,7 @@ import re
 import copy
 from types import MethodType
 from contextlib import contextmanager
+from collections import OrderedDict
 
 import torch
 import torch.nn as nn
@@ -12,6 +13,7 @@ from torch.nn.parallel import DistributedDataParallel
 
 from quant_pack.core.quant.config import QuantConfig
 from quant_pack.core.train.qat_policies import VALID_QUANT_MODE
+from quant_pack.core.wrapper.hook.calibration_builder import ActivationCalibrationBuilder
 from ._registries import FUSED_FORWARD_FUNCTIONS, \
     QUANT_FORWARD_FUNCTIONS
 
@@ -63,6 +65,24 @@ class ParametrizedQuantWrapper(nn.Module):
         self._register_quant_params(fp_layers)
 
     def _do_bn_folding(self, bn_folding_mapping, do_fold_bn):
+        # decorate Conv2d such that its instances can get proper running statistics based on `input_qconf`
+        @property
+        def running_mean(module):
+            if hasattr(module, "input_qconf") and module.input_qconf.enabled:
+                return module._running_mean_q
+            else:
+                return module._running_mean_fp
+
+        @property
+        def running_var(module):
+            if hasattr(module, "input_qconf") and module.input_qconf.enabled:
+                return module._running_var_q
+            else:
+                return module._running_var_fp
+
+        nn.Conv2d.running_mean = running_mean
+        nn.Conv2d.running_var = running_var
+
         for (bn_name, conv_name) in bn_folding_mapping:
             bn_layer = _get_submodule(self.module, bn_name)
             conv_layer = _get_submodule(self.module, conv_name)
@@ -71,8 +91,10 @@ class ParametrizedQuantWrapper(nn.Module):
 
             conv_layer.register_parameter("alpha", bn_layer.weight)
             conv_layer.register_parameter("beta", bn_layer.bias)
-            conv_layer.register_buffer("running_mean", bn_layer.running_mean)
-            conv_layer.register_buffer("running_var", bn_layer.running_var)
+            conv_layer.register_buffer("_running_mean_fp", bn_layer.running_mean)
+            conv_layer.register_buffer("_running_var_fp", bn_layer.running_var)
+            conv_layer.register_buffer("_running_mean_q", None)
+            conv_layer.register_buffer("_running_var_q", None)
             conv_layer.affine = bn_layer.affine
             conv_layer.bn_momentum = bn_layer.momentum
             conv_layer.bn_eps = bn_layer.eps
@@ -98,10 +120,10 @@ class ParametrizedQuantWrapper(nn.Module):
                 else:
                     _register_parameters(
                         m,
-                        ("w_lb", nn.Parameter(m.weight.min(), requires_grad=True)),
-                        ("w_ub", nn.Parameter(m.weight.max(), requires_grad=True)),
-                        ("a_lb", nn.Parameter(torch.tensor(0.), requires_grad=True)),
-                        ("a_ub", nn.Parameter(torch.tensor(1.), requires_grad=True)),
+                        ("w_lb", nn.Parameter(m.weight.detach().min())),
+                        ("w_ub", nn.Parameter(m.weight.detach().max())),
+                        ("a_lb", nn.Parameter(torch.tensor(0.))),
+                        ("a_ub", nn.Parameter(torch.tensor(1.))),
                     )
                     m.weight_qconf = QuantConfig(lb=m.w_lb, ub=m.w_ub, **self.quant_conf)
                     m.input_qconf = QuantConfig(lb=m.a_lb, ub=m.a_ub, **self.quant_conf)
@@ -114,10 +136,8 @@ class ParametrizedQuantWrapper(nn.Module):
     def to_ddp(self, find_unused_parameters=True):
         assert dist.is_available() and dist.is_initialized()
         if isinstance(self.module, DistributedDataParallel):
-            module_without_ddp = self.module.module
-        else:
-            module_without_ddp = self.module
-        self.module = DistributedDataParallel(module_without_ddp, device_ids=[torch.cuda.current_device()],
+            raise RuntimeError("`module` is already DDP")
+        self.module = DistributedDataParallel(self.module, device_ids=[torch.cuda.current_device()],
                                               find_unused_parameters=find_unused_parameters)
 
     def to_torch_quant(self):
@@ -141,6 +161,8 @@ class ParametrizedQuantWrapper(nn.Module):
                 named_params.pop(name)
             optim = torch.optim.__dict__[optim_type]([optim_params], **optim_group["args"])
             ret[optim_name] = optim
+        if len(ret) == 1:
+            ret = next(iter(ret.values()))
         return ret
 
     def quant_w(self, enabled=True):
@@ -163,7 +185,7 @@ class ParametrizedQuantWrapper(nn.Module):
     def _inject_runtime_hooks(self, runtime_hooks):
         need_recover = False
         handles = []
-        if runtime_hooks is not None:
+        if runtime_hooks:
             if isinstance(self.module, DistributedDataParallel):
                 # 前方高能，套娃警告
                 def _ddp_forward(_module, *_args, **_kwargs):
@@ -171,9 +193,9 @@ class ParametrizedQuantWrapper(nn.Module):
                     for _n, _m in _module.named_modules():
                         for _hook in runtime_hooks:
                             if _hook.match(_n, _m):
-                                _method, _hook = _hook.get_hook()
-                                _handle = getattr(_m, _method)(_hook)
-                                _handles.append(_handle)
+                                for _method, _hook in _hook.get_hooks():
+                                    _handle = getattr(_m, _method)(_hook)
+                                    _handles.append(_handle)
                     _outputs = self._module_forward(_module, *_args, **_kwargs)
                     for _handle in _handles:
                         _handle.remove()
@@ -231,3 +253,24 @@ class ParametrizedQuantWrapper(nn.Module):
             outputs[mode] = model(img.to(device, non_blocking=True), runtime_hooks=activated_hooks)
 
         return outputs
+
+    @torch.no_grad()
+    def do_calibration(self, runner, calibration_step, calibration_percentile, device):
+        runner.logger.info(f"start calibration at epoch {runner.epoch}, iter {runner.iter}")
+        for m in self._quant_submodules:
+            # TODO: handle BN-folding?
+            m.w_lb.copy_(m.weight.min())
+            m.w_ub.copy_(m.weight.max())
+        self.quant_w()
+        self.fp_a()
+        act_calib_hook = ActivationCalibrationBuilder(calibration_percentile)
+        for i, data_batch in enumerate(runner.data_loader):
+            if i >= calibration_step:
+                break
+            img, _ = data_batch
+            _ = self(img.to(device, non_blocking=True), runtime_hooks=[act_calib_hook])
+        for m in self._fused_submodules:
+            if not isinstance(m, nn.BatchNorm2d):
+                m._running_mean_q = m._running_mean_fp.clone()
+                m._running_var_q = m._running_var_fp.clone()
+        runner.logger.info(f"calibration done")

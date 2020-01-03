@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import torch
+import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 
 from typing import List, Tuple, Optional
@@ -21,7 +23,8 @@ def _in_intervals(i: int, intervals: IntervalT) -> Optional[Tuple[int, int]]:
 
 class EnableQuantAtIntervals(Hook):
 
-    def __init__(self, quant_mode: str, granularity: str, intervals: IntervalT, always_enable_fp: bool = False):
+    def __init__(self, quant_mode: str, granularity: str, intervals: IntervalT,
+                 always_enable_fp: bool = False, calibrate_steps: int = 1, calibrate_percentile: float = 0.99):
         assert quant_mode in VALID_QUANT_MODE
         assert granularity in VALID_GRANULARITY
         if always_enable_fp and quant_mode != "fp":
@@ -31,6 +34,9 @@ class EnableQuantAtIntervals(Hook):
         self.quant_mode = quant_mode
         self.granularity = granularity
         self.intervals = intervals
+        self.calibrate_steps = calibrate_steps
+        self.calibrate_percentile = calibrate_percentile
+        self.do_calibration_at = min(i[0] for i in intervals)
 
     def _switch_quant_mode(self, runner):
         if _in_intervals(runner.epoch, self.intervals):
@@ -41,13 +47,33 @@ class EnableQuantAtIntervals(Hook):
             runner.model.module.find_unused_parameters = "quant" not in quant_mode
         runner.model.quant_mode = quant_mode
 
+    def _do_calibration(self, runner):
+        device = torch.device(f"cuda:{torch.cuda.current_device()}")
+        runner.model.do_calibration(runner, self.calibrate_steps, self.calibrate_percentile, device)
+
     def before_train_epoch(self, runner: Runner):
         if self.granularity == "epoch":
+            if runner.epoch == self.do_calibration_at:
+                self._do_calibration(runner)
             self._switch_quant_mode(runner)
 
     def before_train_iter(self, runner: Runner):
         if self.granularity == "iter":
+            if runner.iter == self.do_calibration_at:
+                self._do_calibration(runner)
             self._switch_quant_mode(runner)
+
+
+class SetupQuantOnce(Hook):
+
+    def __init__(self, quant_mode):
+        if isinstance(quant_mode, str):
+            quant_mode = (quant_mode, )
+        self.quant_mode = quant_mode
+
+    def before_run(self, runner):
+        runner.model.quant_mode = self.quant_mode
+        runner.model.module.find_unused_parameters = "quant" not in self.quant_mode
 
 
 class IntervalWarmupedVariable(Hook):
@@ -106,13 +132,15 @@ class OptimAlterStep(Hook):
         self.intervals = intervals
 
     def after_train_iter(self, runner):
-        loss = runner.outputs["loss"]
-        runner.model.zero_grad()
-        loss.backward()
         if _in_intervals(runner.epoch, self.intervals):
             optim_idx = int((runner.inner_iter // self.alter_freq) % len(self.apply_to))
-            optim = runner.optimizer[self.apply_to[optim_idx]]
-            optim.step()
+            optims = [runner.optimizer[self.apply_to[optim_idx]], ]
         else:
-            for name in self.apply_to:
-                runner.optimizer[name].step()
+            optims = [runner.optimizer[name] for name in self.apply_to]
+
+        for optim in optims:
+            optim.zero_grad()
+        loss = runner.outputs["loss"]
+        loss.backward()
+        for optim in optims:
+            optim.step()
