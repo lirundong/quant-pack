@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 
+from collections import OrderedDict
+
 import torch
-import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 
 from typing import List, Tuple, Optional
 from mmcv.runner import Hook, Runner
+
+from quant_pack.core.wrapper.hook.activation_builder import HijackModuleOutputBuilder
 
 VALID_QUANT_MODE = ("fp", "quant", "qw_fa", "fw_qa")
 VALID_GRANULARITY = ("epoch", "iter")
@@ -41,11 +44,14 @@ class EnableQuantAtIntervals(Hook):
     def _switch_quant_mode(self, runner):
         if _in_intervals(runner.epoch, self.intervals):
             quant_mode = self.quant_mode
+            in_qat = runner.mode == "train"
         else:
             quant_mode = ("fp",)
+            in_qat = False
         if runner.model.quant_mode != quant_mode and isinstance(runner.model.module, DistributedDataParallel):
             runner.model.module.find_unused_parameters = "quant" not in quant_mode
         runner.model.quant_mode = quant_mode
+        runner.model._in_qat = in_qat
 
     def _do_calibration(self, runner):
         device = torch.device(f"cuda:{torch.cuda.current_device()}")
@@ -74,6 +80,9 @@ class SetupQuantOnce(Hook):
     def before_run(self, runner):
         runner.model.quant_mode = self.quant_mode
         runner.model.module.find_unused_parameters = "quant" not in self.quant_mode
+
+    def before_train_epoch(self, runner):
+        runner.model._in_qat = any(mode != "fp" for mode in self.quant_mode)
 
 
 class IntervalWarmupedVariable(Hook):
@@ -133,10 +142,13 @@ class OptimAlterStep(Hook):
 
     def after_train_iter(self, runner):
         if _in_intervals(runner.epoch, self.intervals):
-            optim_idx = int((runner.inner_iter // self.alter_freq) % len(self.apply_to))
-            optims = [runner.optimizer[self.apply_to[optim_idx]], ]
+            if self.alter_freq > 0:
+                optim_idx = int((runner.inner_iter // self.alter_freq) % len(self.apply_to))
+                optims = [runner.optimizer[self.apply_to[optim_idx]], ]
+            else:
+                optims = [runner.optimizer[n] for n in self.apply_to]
         else:
-            optims = [runner.optimizer[name] for name in self.apply_to]
+            optims = [runner.optimizer[self.apply_to[0]], ]
 
         for optim in optims:
             optim.zero_grad()
@@ -144,3 +156,25 @@ class OptimAlterStep(Hook):
         loss.backward()
         for optim in optims:
             optim.step()
+
+
+class HijackModuleOutput(Hook):
+
+    def __init__(self, module_name, output_name, detach_fp=True):
+        self.module_name = module_name
+        self.hook_name = f"hijack_{self.module_name}"
+        self.output_name = output_name
+        self.detach_fp = detach_fp
+
+    def before_run(self, runner):
+        if not hasattr(runner.model, "runtime_hooks"):
+            runner.model.runtime_hooks = OrderedDict()
+
+    def before_train_iter(self, runner):
+        # priority should be "LOW" to make sure `_in_qat` is ready
+        if runner.model._in_qat:
+            runner.model.runtime_hooks[self.hook_name] = HijackModuleOutputBuilder(self.module_name, self.output_name)
+
+    def after_train_iter(self, runner):
+        if self.hook_name in runner.model.runtime_hooks:
+            runner.model.runtime_hooks.pop(self.hook_name)

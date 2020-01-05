@@ -55,12 +55,10 @@ train:
       args:
         name: ce_loss_weight
         value: 1.0
-    - name: IntervalWarmupedVariable
+    - name: ConstantVariable
       args:
         name: kl_loss_weight
         value: 1.0
-        warmup_iters: 800
-        intervals: *q_intervals
     - name: ConstantVariable
       args:
         name: kl_temperature
@@ -70,11 +68,11 @@ train:
         apply_to:
           - *n_w
           - *n_q
-        alter_freq: 1
+        alter_freq: -1  # tune W and Theta in parallel
         intervals: *q_intervals
 
 log:
   interval: 50
 
-work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-small-200/
-resume: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-small-200/epoch_118.pth
+work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-small-200-vanilla/
+resume: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-small-200-vanilla/epoch_115.pth

@@ -20,6 +20,7 @@ POST_PROCESS = {
 
 
 class InjectRuntimeHook(Hook):
+    # TODO: merge this hook with qat_injection_hook
 
     def __init__(self, intervals, hook_builders, post_process):
         self.intervals = intervals
@@ -48,7 +49,8 @@ class InjectRuntimeHook(Hook):
             self.post_process[process_name] = process
 
     def before_run(self, runner):
-        runner.model.runtime_hooks = OrderedDict()
+        if not hasattr(runner.model, "runtime_hooks"):
+            runner.model.runtime_hooks = OrderedDict()
 
     def before_iter(self, runner):
         if self.every_n_iters(runner, self.intervals) or self.end_of_epoch(runner):

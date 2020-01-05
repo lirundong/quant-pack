@@ -10,6 +10,7 @@ import quant_pack.core.train as training
 import quant_pack.core.eval as evaluation
 import quant_pack.core.wrapper as wrapper
 import quant_pack.core.logger as logger
+from quant_pack.core.train.qat_policies import HijackModuleOutput
 
 
 class _OptimDict(dict):
@@ -58,7 +59,11 @@ class MultiOptimRunner(Runner):
         self.register_hook(CheckpointHook(interval=ckpt_interval))
 
         for hook in chain(metrics, qat_policies, lr_policies):
-            self.register_hook(hook)
+            if isinstance(hook, HijackModuleOutput):
+                priority = "LOW"
+            else:
+                priority = "NORMAL"
+            self.register_hook(hook, priority)
 
     def register_eval_hooks(self, metrics):
         for metric in metrics:

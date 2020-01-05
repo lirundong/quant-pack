@@ -57,6 +57,7 @@ class ParametrizedQuantWrapper(nn.Module):
         self.module = module
         self.quant_conf = quant_conf
         self.quant_mode = None  # setup by qat_hooks later
+        self._in_qat = False  # add this flag so `HijackModuleOutput` knows whether itself be enabled
         self._module_forward = module.__class__.forward
         self._quant_submodules = set()
         self._fused_submodules = set()
@@ -91,10 +92,10 @@ class ParametrizedQuantWrapper(nn.Module):
 
             conv_layer.register_parameter("alpha", bn_layer.weight)
             conv_layer.register_parameter("beta", bn_layer.bias)
-            conv_layer.register_buffer("_running_mean_fp", bn_layer.running_mean)
-            conv_layer.register_buffer("_running_var_fp", bn_layer.running_var)
-            conv_layer.register_buffer("_running_mean_q", None)
-            conv_layer.register_buffer("_running_var_q", None)
+            conv_layer.register_buffer("_running_mean_fp", bn_layer.running_mean.clone())
+            conv_layer.register_buffer("_running_var_fp", bn_layer.running_var.clone())
+            conv_layer.register_buffer("_running_mean_q", bn_layer.running_mean.clone())
+            conv_layer.register_buffer("_running_var_q", bn_layer.running_var.clone())
             conv_layer.affine = bn_layer.affine
             conv_layer.bn_momentum = bn_layer.momentum
             conv_layer.bn_eps = bn_layer.eps
@@ -227,6 +228,10 @@ class ParametrizedQuantWrapper(nn.Module):
     def batch_processor(model, data_batch, train_mode, device, quant_mode=None):
         if quant_mode is None:
             quant_mode = model.quant_mode
+            if any(mode != "fp" for mode in quant_mode):
+                model._in_qat = True
+            else:
+                model._in_qat = False
         runtime_hooks = getattr(model, "runtime_hooks", {})
         img, label = data_batch
         outputs = {"label": label.to(device, non_blocking=True)}
@@ -247,6 +252,8 @@ class ParametrizedQuantWrapper(nn.Module):
 
             activated_hooks = []
             for _, hook in runtime_hooks.items():
+                if hasattr(hook, "set_output_reg"):
+                    hook.set_output_reg(outputs)
                 if hook.inject_at(mode):
                     activated_hooks.append(hook)
 

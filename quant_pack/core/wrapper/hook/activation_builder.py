@@ -63,3 +63,28 @@ class SaveAllValueBuilder(SaveActivationBuilder):
             self._reg[name][k] = v
         module.gather_buffer.clear()
         module.gather_data = False
+
+
+class HijackModuleOutputBuilder(HookBuilder):
+
+    def __init__(self, module_name, output_name, output_reg=None):
+        super(HijackModuleOutputBuilder, self).__init__(phases=("forward", ), hook_reg=output_reg)
+        self.module_name = module_name
+        self.output_name = output_name
+        self.current_mode = None
+
+    def match(self, name, module):
+        return name == self.module_name
+
+    def inject_at(self, quant_mode):
+        self.current_mode = quant_mode
+        return True
+
+    def set_output_reg(self, output_reg):
+        self._reg = output_reg
+
+    def _runtime_forward_hook(self, module, input, output):
+        if self.current_mode == "fp":
+            output = output.detach()
+        name = f"{self.output_name}_{self.current_mode}"
+        self._reg[name] = output
