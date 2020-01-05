@@ -6,12 +6,11 @@ from mmcv.runner import Hook
 from quant_pack.core.utils import cls_acc, SyncValue, clear_or_init
 
 
-class DistEvalTopKHook(Hook):
+class EvalTopKHook(Hook):
 
     BUFFER_NAME = "val_buffer"
 
     def __init__(self, logits_names, topk):
-        assert dist.is_available() and dist.is_initialized()
         self.logits_names = logits_names
         self.topk = topk
 
@@ -31,6 +30,21 @@ class DistEvalTopKHook(Hook):
                 topk = cls_acc(logits, runner.outputs["label"], self.topk)
                 for k, acc in zip(self.topk, topk):
                     buffer[f"{name}_top{k}_eval_acc"].update(acc, n=batch_size)
+
+    def after_val_epoch(self, runner):
+        buffer = getattr(runner, self.BUFFER_NAME)
+        log_vars = {}
+        for name, val in buffer.items():
+            if val.count > 0:
+                log_vars[name] = val.global_avg
+        runner.log_buffer.output.update(log_vars)
+
+
+class DistEvalTopKHook(EvalTopKHook):
+
+    def __init__(self, logits_names, topk):
+        assert dist.is_available() and dist.is_initialized()
+        super(DistEvalTopKHook, self).__init__(logits_names, topk)
 
     def after_val_epoch(self, runner):
         device = next(iter(runner.model.parameters())).device

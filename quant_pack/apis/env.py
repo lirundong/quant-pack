@@ -56,7 +56,10 @@ def _init_dist_and_device(cfg):
             raise RuntimeError(f"distributed initialization failed: {e}")
     else:
         proc_id, n_tasks = 0, 1
-        cfg.device = torch.device("cuda:0")
+        if torch.cuda.is_available():
+            cfg.device = torch.device("cuda:0")
+        else:
+            cfg.device = torch.device("cpu")
 
     if n_tasks > 1:
         assert cfg.port >= 2048, f"port {cfg.port} is reserved"

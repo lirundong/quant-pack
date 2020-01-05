@@ -1,0 +1,107 @@
+__BASE__: null
+
+model:
+  name: resnet18
+  args:
+    pretrained: false
+    num_classes: 10
+  input_size: [1, 3, 32, 32]
+
+wrapper:
+  name: ParametrizedQuantWrapper
+  args:
+    quant_conf:
+      mode: linear
+      bit_width: 4
+      align_zero: false
+    do_fold_bn: false
+    fp_layers: null
+
+epochs: 200
+work_flow:
+  - ["train", 1]
+  - ["val", 1]
+
+train:
+  data_loader:
+    args:
+      batch_size: 128
+      shuffle: true
+      pin_memory: true
+      num_workers: 2
+  optim_groups:
+    - name: &n_w weight_params
+      matches:
+        - .*
+      optim_type: SGD
+      args:
+        lr: 0.1
+        momentum: 0.9
+        weight_decay: !!float 1e-4
+        nesterov: true
+  loss:
+    name: CEKL
+    args: {}
+  metrics:
+    - name: TopK
+      args:
+        logits_names:
+          - fp
+        topk: [1, 5]
+  lr_policies:
+    - name: StepMultiOptim
+      args:
+        gamma: 0.1
+        step: [80, 120]
+        warmup: linear
+        warmup_iters: 750  # ~4 epochs on b64x8 setting
+        warmup_ratio: 0.5  # starts from 0.2
+        scale_by_world_size: false
+        by_epoch: true
+        apply_to:
+          - *n_w
+  qat_policies:
+    - name: SetupQuantOnce
+      args:
+        quant_mode: fp
+    - name: ConstantVariable
+      args:
+        name: ce_loss_weight
+        value: 1.0
+    - name: Optimizer
+      args:
+        grad_clip: null
+  ckpt_interval: 1
+
+eval:
+  data_loader:
+    args:
+      batch_size: 128
+      shuffle: false
+      pin_memory: true
+      num_workers: 1
+  metrics:
+    - name: EvalTopK
+      args:
+        logits_names:
+          - fp
+        topk: [1, 5]
+  quant_mode:
+    - fp
+
+runtime_hooks: null
+
+log:
+  interval: 200
+  hooks:
+    - type: TextLoggerHook
+    - type: EnhancedTBLoggerHook
+
+dataset:
+  name: CIFAR10
+  args:
+    root: /home/lirundong/HDD1/Datasets/CIFAR/
+
+work_dir: /home/lirundong/HDD1/Experiments/resnet18-cifar10
+pre_trained: null
+resume: null

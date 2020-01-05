@@ -21,9 +21,12 @@ class ActivationCalibrationBuilder(HookBuilder):
         input, _ = input.reshape(-1).sort()
         n = input.numel()
         k = int(n * self.percentile)
-        bounds = torch.tensor([input[k], input[n - k]], device=input.device).div_(dist.get_world_size())
-        dist.all_reduce(bounds, dist.ReduceOp.SUM)
-        ub, lb = bounds
+        if dist.is_available() and dist.is_initialized():
+            bounds = torch.tensor([input[k], input[n - k]], device=input.device).div_(dist.get_world_size())
+            dist.all_reduce(bounds, dist.ReduceOp.SUM)
+            ub, lb = bounds
+        else:
+            ub, lb = input[k], input[n - k]
         assert lb < ub
         module.a_lb.copy_(lb)
         module.a_ub.copy_(ub)

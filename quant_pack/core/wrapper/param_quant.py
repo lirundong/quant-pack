@@ -208,9 +208,9 @@ class ParametrizedQuantWrapper(nn.Module):
                 for n, m in self.module.named_modules():
                     for hook in runtime_hooks:
                         if hook.match(n, m):
-                            method, hook = hook.get_hook()
-                            handle = getattr(m, method)(hook)
-                            handles.append(handle)
+                            for method, hook in hook.get_hooks():
+                                handle = getattr(m, method)(hook)
+                                handles.append(handle)
         try:
             yield
         finally:

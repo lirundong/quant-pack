@@ -18,7 +18,7 @@ _dataset_zoo.update({k: v for k, v in vars(datasets).items()
 _normalize_rgb = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                       std=[0.229, 0.224, 0.225])
 _train_transforms = {
-    "CIFAR": transforms.Compose([
+    "CIFAR10": transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
@@ -34,7 +34,7 @@ _train_transforms = {
     ]),
 }
 _eval_transforms = {
-    "CIFAR": transforms.Compose([
+    "CIFAR10": transforms.Compose([
         transforms.ToTensor(),
         _normalize_rgb,
     ]),

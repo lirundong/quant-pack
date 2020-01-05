@@ -1,0 +1,88 @@
+__BASE__: configs/GQ_Nets/resnet18_base.yaml
+
+model:
+  name: resnet18
+  args:
+    num_classes: 200
+
+wrapper:
+  name: ParametrizedQuantWrapper
+  args:
+    quant_conf:
+      mode: linear
+      bit_width: 3
+      align_zero: false
+    do_fold_bn: false
+    fp_layers: null # list with item like: ((module|model).)*conv1
+
+dataset:
+  name: ImageNetST
+  args:
+    img_dir: /mnt/lustre/share/images/
+    meta_dir: /mnt/lustre/lirundong/Data/Meta/imagenet_dev/  # 100k train, 10k val
+
+train:
+  optim_groups:
+    - name: &n_q quant_params
+      matches:
+        - .*(_lb|_ub)$
+      optim_type: Adam
+      args:
+        lr: !!float 1e-3
+        weight_decay: 0.0
+    - name: &n_w weight_params
+      matches:
+        - .*
+      optim_type: SGD
+      args:
+        lr: 0.05
+        momentum: 0.9
+        weight_decay: !!float 1e-4
+        nesterov: true
+  lr_policies:
+    - name: StepMultiOptim
+      args:
+        gamma: 0.1
+        step: [60, 90]
+        warmup: linear
+        warmup_iters: 800  # ~4 epochs on b512 setting
+        warmup_ratio: 0.25
+        scale_by_world_size: true
+        by_epoch: true
+        apply_to:
+          - *n_w
+  qat_policies:
+    - name: EnableQuantAtIntervals
+      args:
+        quant_mode: quant
+        granularity: epoch
+        always_enable_fp: true
+        intervals: &q_intervals
+          - [25, 60]
+          - [65, 90]
+          - [95, -1]
+    - name: ConstantVariable
+      args:
+        name: ce_loss_weight
+        value: 1.0
+    - name: ConstantVariable
+      args:
+        name: kl_loss_weight
+        value: 1.0
+    - name: ConstantVariable
+      args:
+        name: kl_temperature
+        value: 1.0
+    - name: OptimAlterStep
+      args:
+        apply_to:
+          - *n_w
+          - *n_q
+        alter_freq: -1  # tune W and Theta in parallel
+        intervals: *q_intervals
+
+log:
+  interval: 50
+
+work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-small-200-vanilla-w3a3/
+resume: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-small-200-vanilla/epoch_25.pth
