@@ -1,0 +1,11 @@
+__BASE__: configs/baselines/resnet18_cifar10.yaml
+
+dataset:
+  name: CIFAR10
+  args:
+    root: /home/lirundong/HDD1/Datasets/CIFAR/
+    no_cutout: true
+
+work_dir: /home/lirundong/HDD1/Experiments/resnet18-cifar10-noco
+pre_trained: null
+resume: null

@@ -94,8 +94,15 @@ class ParametrizedQuantWrapper(nn.Module):
             conv_layer.register_parameter("beta", bn_layer.bias)
             conv_layer.register_buffer("_running_mean_fp", bn_layer.running_mean.clone())
             conv_layer.register_buffer("_running_var_fp", bn_layer.running_var.clone())
-            conv_layer.register_buffer("_running_mean_q", bn_layer.running_mean.clone())
-            conv_layer.register_buffer("_running_var_q", bn_layer.running_var.clone())
+            # NOTE: BC, prev multi-domain BN implementation registered additional EMA buffers to BN layers
+            if "running_mean_q" in bn_layer._buffers:
+                running_mean_q = bn_layer.running_mean_q.clone()
+                running_var_q = bn_layer.running_var_q.clone()
+            else:
+                running_mean_q = bn_layer.running_mean.clone()
+                running_var_q = bn_layer.running_var.clone()
+            conv_layer.register_buffer("_running_mean_q", running_mean_q)
+            conv_layer.register_buffer("_running_var_q", running_var_q)
             conv_layer.affine = bn_layer.affine
             conv_layer.bn_momentum = bn_layer.momentum
             conv_layer.bn_eps = bn_layer.eps

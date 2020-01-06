@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from terminaltables import GithubFlavoredMarkdownTable
+from tqdm import tqdm
 
 
 class CosineDistancePostProcess:
@@ -237,10 +238,11 @@ def pairwise(iterable):
 
 class RelativeErrorPostProcess:
 
-    def __init__(self, apply_to, abnormal_x_ub=None, abnormal_y_lb=None, out_err_topn=10, in_err_topk=3):
+    def __init__(self, apply_to, ce_loss_from, abnormal_x_ub=None, abnormal_y_lb=None, out_err_topn=10, in_err_topk=3):
         assert len(apply_to) == 2, "currently we only support pair-wise comparison"
         # the first registry is reference, second contains outputs with error
         self.apply_to = apply_to
+        self.ce_loss_from = ce_loss_from
         # currently we only filter (small x error, large y error) points
         self.out_err_topn = out_err_topn
         self.in_err_topk = in_err_topk
@@ -250,11 +252,17 @@ class RelativeErrorPostProcess:
         else:
             self.x_cond = self.y_cond = None
 
-    def after_iter(self, input_reg):
+    def after_iter(self, input_reg, outputs):
         ref_reg = input_reg[self.apply_to[0]]
         with_err_reg = input_reg[self.apply_to[1]]
         per_layer_err = OrderedDict()
-        for k in ref_reg:
+
+        logits_q = outputs[self.ce_loss_from].detach()
+        labels = outputs["label"]
+        ce_loss = F.cross_entropy(logits_q, labels, reduction="none")
+        per_layer_err["per_instance_ce_loss"] = ce_loss.to("cpu").clone()
+
+        for k in tqdm(ref_reg, desc=f"{self.__class__.__name__}"):
             input_err = relative_error(with_err_reg[k]["input"], ref_reg[k]["input"])
             output_err = relative_error(with_err_reg[k]["output"], ref_reg[k]["output"])
             weight_err = relative_error(with_err_reg[k]["weight"], ref_reg[k]["weight"])
@@ -305,23 +313,5 @@ class RelativeErrorPostProcess:
                 )
                 per_layer_err[k]["abnormal_report"] = abnormal_report
                 per_layer_err[k]["qconf_report"] = qconf_report
-
-        # pair-wise output-input error analysis
-        for k1, k2 in pairwise(ref_reg.keys()):
-            output_err = per_layer_err[k1]["output_error"].reshape(-1)
-            input_err = per_layer_err[k2]["input_error"].reshape(-1)
-            if ref_reg[k1]["type"] == ref_reg[k2]["type"]:
-                assert output_err.shape == input_err.shape, f"{k1} -> {k2} do not match"
-            else:
-                assert output_err.numel() == input_err.numel(), f"{k1} -> {k2} do not match"
-            transport_report = scalar_to_table(
-                fmt="vertical",
-                prev_out_err_norm=torch.norm(output_err).item(),
-                current_in_err_norm=torch.norm(input_err).item(),
-                prev_out_err_var=torch.var(output_err).item(),
-                current_in_err_var=torch.var(input_err).item(),
-                cosine_dist=F.cosine_similarity(output_err, input_err, dim=0).item(),
-            )
-            per_layer_err[k2]["trans_err_report"] = transport_report
 
         return per_layer_err

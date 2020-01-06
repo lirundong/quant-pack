@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import os
+import subprocess
+import sys
 from argparse import ArgumentParser
 from collections import OrderedDict
 
@@ -8,8 +10,8 @@ import torch
 
 _cleanup_info = \
     "Note that due to `deep_copy` in previous implementations, modules are " \
-    "part of the old pickle, so you have to include previous codebase in " \
-    "PYTHONPATH when calling this tool with `--clean`."
+    "part of the old pickle, so you have to assign the directory and git commit hash of previous codebase to " \
+    "`--prev-codebase` and `--prev-commit` when calling this tool with `--clean`."
 
 
 def main():
@@ -18,9 +20,22 @@ def main():
     parser.add_argument("--output", "-o", required=True, help="output directory for upgraded checkpoint")
     parser.add_argument("--clean", action="store_true",
                         help="cleanup unnecessary pickles in input checkpoint." + _cleanup_info)
+    parser.add_argument("--prev-codebase",
+                        help="directory of previous codebase, useful when cleaning checkpoints")
+    parser.add_argument("--prev-commit",
+                        help="hash of git commit in previous codebase, useful when cleaning checkpoints")
     args = parser.parse_args()
+
     if args.clean:
-        raise NotImplementedError("`--clean` is not ready yet")
+        assert args.prev_commit is not None and args.prev_codebase is not None
+        print(f"reconstructing previous codebase, wait a minute...")
+        ret = subprocess.run(["git", "checkout", "-b", args.prev_commit, args.prev_commit],
+                             cwd=args.prev_codebase, capture_output=True, encoding="utf-8")
+        ret.check_returncode()
+        ret = subprocess.run(["python", "setup.py", "build_ext", "--inplace"],
+                             cwd=args.prev_codebase, capture_output=True, encoding="utf-8")
+        ret.check_returncode()
+        sys.path.insert(0, args.prev_codebase)
 
     ckpt = torch.load(args.input, torch.device("cpu"))
     print(f"loaded input checkpoint: {args.input}")

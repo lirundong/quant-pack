@@ -3,8 +3,7 @@
 import torch
 from torch.nn import Parameter
 
-from quant_pack.core.quant.quantizers import fake_linear_quant, clamp
-from quant_pack.core.quant.quantizers import cuda_fake_linear_quant
+from quant_pack.core.quant.functional import fake_linear_quant as cuda_fake_linear_quant
 
 SEED = 19260817
 DEVICE = torch.device("cuda:0")

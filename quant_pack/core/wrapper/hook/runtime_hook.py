@@ -53,15 +53,15 @@ class InjectRuntimeHook(Hook):
             runner.model.runtime_hooks = OrderedDict()
 
     def before_iter(self, runner):
-        if self.every_n_iters(runner, self.intervals) or self.end_of_epoch(runner):
+        if self.every_n_inner_iters(runner, self.intervals) or self.end_of_epoch(runner):
             runner.model.runtime_hooks.update(self.named_hooks)
             runner.log_buffer.output["plot"] = OrderedDict()
 
     def after_iter(self, runner):
-        if self.every_n_iters(runner, self.intervals) or self.end_of_epoch(runner):
+        if self.every_n_inner_iters(runner, self.intervals) or self.end_of_epoch(runner):
             plot_buffer = runner.log_buffer.output["plot"]
             for name, process in self.post_process.items():
-                result = process.after_iter(self.hook_reg)
+                result = process.after_iter(self.hook_reg, runner.outputs)
                 plot_buffer[name] = result
             for _, reg in self.hook_reg.items():
                 reg.clear()

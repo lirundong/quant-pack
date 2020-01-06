@@ -65,18 +65,32 @@ def plot_hist_with_log_scale(x, title=None):
     return f
 
 
-def plot_xy_scatter(x, y, xrange=None, yrange=None, xlabel=None, ylabel=None, title=None, logscale=False):
+def plot_xy_scatter(x, y, c=None, xrange=None, yrange=None, xlabel=None, ylabel=None, title=None, logscale=False):
     assert x.numel() == y.numel()
+    if c is not None:  # color which represent error of each instance
+        assert x.size(0) == y.size(0) == len(c)
+        # plot points with small errors first, then overlap with points with larger errors
+        c, idx = c.sort()
+        x = x[idx]
+        y = y[idx]
+        c_view = (len(c),) + (1,) * (x.ndim - 1)
+        c = c.reshape(c_view).expand_as(x)
     f = plt.figure(figsize=(3, 3), dpi=300)
     ax = f.gca()
     if xrange:
         m = (xrange[0] < x) & (x < xrange[1])
         x, y = x[m], y[m]
+        if c is not None:
+            c = c[m]
     if yrange:
         m = (yrange[0] < y) & (y < yrange[1])
         x, y = x[m], y[m]
+        if c is not None:
+            c = c[m]
     x, y = to_np_array(x, y)
-    ax.scatter(x.reshape(-1), y.reshape(-1), marker="+", linewidths=1)
+    if c is not None:
+        c = c.numpy().reshape(-1)
+    sc = ax.scatter(x.reshape(-1), y.reshape(-1), s=9, c=c, marker="+", cmap="cool", alpha=0.75)
     if logscale:
         ax.set_xscale("log", basex=10)
         ax.set_yscale("log", basey=10)
@@ -86,6 +100,8 @@ def plot_xy_scatter(x, y, xrange=None, yrange=None, xlabel=None, ylabel=None, ti
         ax.set_xlabel(xlabel)
     if ylabel:
         ax.set_ylabel(ylabel)
+    if c is not None:
+        plt.colorbar(sc)
     plt.tight_layout()
     return f
 
@@ -98,18 +114,29 @@ def plot_3d_hist_of_filters(tb_writer, data, label):
 
 class EnhancedTBLoggerHook(TensorboardLoggerHook):
 
+    def __init__(self,
+                 log_dir=None,
+                 interval=10,
+                 ignore_last=True,
+                 reset_flag=True,
+                 exit_after_one_plot=False,):
+        super(EnhancedTBLoggerHook, self).__init__(log_dir, interval, ignore_last, reset_flag)
+        self.exit_after_one_plot = exit_after_one_plot
+
     @master_only
     def log(self, runner):
         if "plot" in runner.log_buffer.output:
+            runner.logger.info(f"plotting diagnosis at epoch {runner.epoch}, step {runner.inner_iter}")
             plot_buf = runner.log_buffer.output.pop("plot")
             for plot_name, plot_data in plot_buf.items():
                 # TODO: add `plot_func` parameter in input buffers
                 if isinstance(plot_data, dict):  # layer-wise error analysis
+                    per_instance_loss = plot_data.pop("per_instance_ce_loss")
                     for layer_name, err_dict in plot_data.items():
                         input_err_mean = err_dict["input_error_mean"]
                         output_err = err_dict["output_error"]
                         tag = f"input_output_error/{layer_name}"
-                        fig_scatter = plot_xy_scatter(input_err_mean, output_err,
+                        fig_scatter = plot_xy_scatter(input_err_mean, output_err, per_instance_loss,
                                                       xrange=(-10., 10.), yrange=(-10., 10.),  # TODO: remove this ad-hoc
                                                       xlabel="input_error_mean", ylabel="output_error",
                                                       title=layer_name)
@@ -143,3 +170,14 @@ class EnhancedTBLoggerHook(TensorboardLoggerHook):
             plot_buf.clear()
 
         super(EnhancedTBLoggerHook, self).log(runner)
+
+        if self.exit_after_one_plot:
+            runner.logger.info(f"diagnosis plot done, exit...")
+            exit(0)
+
+    def after_val_iter(self, runner):
+        if self.every_n_inner_iters(runner, self.interval):
+            runner.log_buffer.average()
+            self.log(runner)
+            if self.reset_flag:
+                runner.log_buffer.clear_output()
