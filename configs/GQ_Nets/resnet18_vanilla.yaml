@@ -1,27 +1,10 @@
+# training with b128*16, multi-domain BN, no alternative training, no loss weight scheduling setting
 __BASE__: configs/GQ_Nets/resnet18_base.yaml
 
-model:
-  name: resnet18
-  args:
-    num_classes: 200
-
-wrapper:
-  name: ParametrizedQuantWrapper
-  args:
-    quant_conf:
-      mode: linear
-      bit_width: 2
-      align_zero: false
-    do_fold_bn: false
-    fp_layers: null # list with item like: ((module|model).)*conv1
-
-dataset:
-  name: ImageNetST
-  args:
-    img_dir: /mnt/lustre/share/images/
-    meta_dir: /mnt/lustre/lirundong/Data/Meta/imagenet_dev/  # 100k train, 10k val
-
 train:
+  data_loader:
+    args:
+      batch_size: 128
   optim_groups:
     - name: &n_q quant_params
       matches:
@@ -45,7 +28,7 @@ train:
         gamma: 0.1
         step: [60, 90]
         warmup: linear
-        warmup_iters: 800  # ~4 epochs on b512 setting
+        warmup_iters: 2500  # ~4 epochs on b128*16 setting
         warmup_ratio: 0.25
         scale_by_world_size: true
         by_epoch: true
@@ -82,8 +65,9 @@ train:
         intervals: *q_intervals
 
 log:
-  interval: 50
+  interval: 200
+  hooks:
+    - type: TextLoggerHook
+    - type: TensorboardLoggerHook
 
-work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-small-200-vanilla-w2a2/
-resume: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-small-200-vanilla-w2a2/latest.pth
-# resume: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-small-200-vanilla/epoch_25.pth
+work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-vanilla/

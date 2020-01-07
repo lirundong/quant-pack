@@ -1,22 +1,22 @@
 # -*- coding: utf-8 -*-
 
 import torch
-import torchvision
 from torch.utils.data import DataLoader, DistributedSampler
 
 import quant_pack.core.wrapper as wrapper
 import quant_pack.core.runner as runner
-from quant_pack.datasets import get_dataset
+from quant_pack.datasets import build_dataset
+from quant_pack.models import build_model
 
 from .utils import load_pre_trained, item_to_tuple
 
 
 def _dist_train(cfg):
-    train_set, eval_set = get_dataset(cfg.dataset.name, eval_only=False, **cfg.dataset.args)
+    train_set, eval_set = build_dataset(cfg.dataset.name, eval_only=False, **cfg.dataset.args)
     train_loader = DataLoader(train_set, sampler=DistributedSampler(train_set), **cfg.train.data_loader.args)
     eval_loader = DataLoader(eval_set, sampler=DistributedSampler(eval_set), **cfg.eval.data_loader.args)
 
-    model = torchvision.models.__dict__[cfg.model.name](**cfg.model.args)
+    model = build_model(cfg.model)
     if cfg.pre_trained:
         load_pre_trained(model, cfg.pre_trained)
     bn_folding_mapping = wrapper.track_bn_folding_mapping(model, torch.randn(*cfg.model.input_size))
@@ -42,11 +42,11 @@ def _dist_train(cfg):
 
 
 def _local_train(cfg):
-    train_set, eval_set = get_dataset(cfg.dataset.name, eval_only=False, **cfg.dataset.args)
+    train_set, eval_set = build_dataset(cfg.dataset.name, eval_only=False, **cfg.dataset.args)
     train_loader = DataLoader(train_set, **cfg.train.data_loader.args)
     eval_loader = DataLoader(eval_set, **cfg.eval.data_loader.args)
 
-    model = torchvision.models.__dict__[cfg.model.name](**cfg.model.args)
+    model = build_model(cfg.model)
     if cfg.pre_trained:
         load_pre_trained(model, cfg.pre_trained)
     bn_folding_mapping = wrapper.track_bn_folding_mapping(model, torch.randn(*cfg.model.input_size))
