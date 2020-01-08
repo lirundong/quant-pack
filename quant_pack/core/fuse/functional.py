@@ -20,29 +20,41 @@ else:
     var_mean = _var_mean
 
 
+def detach_vars(*args):
+    ret = []
+    for arg in args:
+        if arg is not None:
+            assert torch.is_tensor(arg)
+            ret.append(arg.detach())
+        else:
+            ret.append(arg)
+    return ret
+
+
 def fused_conv_bn_forward(module, input):
     if module.input_transform is not None:
         input = module.input_transform(input)
 
+    weight, bias, alpha, beta = module.weight, module.bias, module.alpha, module.beta
+
     if not module.fold_bn:
-        weight = module.weight
         if module.weight_transform is not None:
             weight = module.weight_transform(weight)
-        pre_activation = F.conv2d(input, weight, module.bias, module.stride,
+        elif module.weight_qconf.retain_fp:
+            weight, bias, alpha, beta = detach_vars(weight, bias, alpha, beta)
+        pre_activation = F.conv2d(input, weight, bias, module.stride,
                                   module.padding, module.dilation, module.groups)
         normed_activation = F.batch_norm(pre_activation, module.running_mean, module.running_var,
-                                         module.alpha, module.beta, module.training,
+                                         alpha, beta, module.training,
                                          module.bn_momentum, module.bn_eps)
-        # TODO: remove the ad-hoc here
         if getattr(module, "gather_data", None):
-            module.gather_buffer["input"] = input.detach()
-            module.gather_buffer["weight"] = weight.detach()
-            module.gather_buffer["output"] = pre_activation.detach()
+            for name in module.gather_data:
+                module.gather_buffer[name] = locals()[name].detach()
         return normed_activation
 
     with torch.no_grad():
         if module.training:
-            pre_activation = F.conv2d(input, module.weight, module.bias, module.stride,
+            pre_activation = F.conv2d(input, weight, bias, module.stride,
                                       module.padding, module.dilation, module.groups)
             pre_activation = pre_activation.permute(1, 0, 2, 3).reshape(module.out_channels, -1)
             var, mean = var_mean(pre_activation, dim=1)
@@ -54,17 +66,17 @@ def fused_conv_bn_forward(module, input):
         w_view = (module.out_channels, 1, 1, 1)
 
     if module.affine:
-        weight = module.weight * (module.alpha / safe_std).view(w_view)
-        beta = module.beta - module.alpha * mean / safe_std
-        if module.bias is not None:
-            bias = module.alpha * module.bias / safe_std + beta
+        weight = weight * (alpha / safe_std).view(w_view)
+        beta = beta - alpha * mean / safe_std
+        if bias is not None:
+            bias = alpha * bias / safe_std + beta
         else:
             bias = beta
     else:
-        weight = module.weight / safe_std.view(w_view)
+        weight = weight / safe_std.view(w_view)
         beta = -mean / safe_std
-        if module.bias is not None:
-            bias = module.bias / safe_std + beta
+        if bias is not None:
+            bias = bias / safe_std + beta
         else:
             bias = beta
 

@@ -17,7 +17,7 @@ else
 fi
 
 GLOG_vmodule=MemcachedClient=-1 srun \
-  -p ${2:-VI_AIC_1080TI} \
+  -p ${2:-VI_AIC_1080Te} \
   -n${3:-8} \
   ${NODES} \
   --gres=gpu:8 \

@@ -20,6 +20,7 @@ class QuantConfig:
         self.ub = ub
         self.align_zero = align_zero
         self.prune_to_zero = prune_to_zero
+        self.retain_fp = False
 
         self._enabled = True
         self._quantizer = _registered_quantizers[self.mode]
@@ -32,7 +33,7 @@ class QuantConfig:
 
     @property
     def transform(self):
-        if self._enabled:
+        if self._enabled and not self.retain_fp:
             if self.prune_to_zero:
                 lb, ub = self.lb.item(), self.ub.item()
                 delta = (ub - lb) / (2 ** self.bit_width - 1)

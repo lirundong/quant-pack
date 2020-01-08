@@ -34,6 +34,17 @@ def fake_linear_quant(x, lb, ub, k, align_zero=False, prune_lb=None, prune_ub=No
     return qx
 
 
+def detach_vars(*args):
+    ret = []
+    for arg in args:
+        if arg is not None:
+            assert torch.is_tensor(arg)
+            ret.append(arg.detach())
+        else:
+            ret.append(arg)
+    return ret
+
+
 def quant_conv2d_forward(module, input):
     raise NotImplementedError()
 
@@ -41,15 +52,13 @@ def quant_conv2d_forward(module, input):
 def quant_linear_forward(module, input):
     if module.input_transform is not None:
         input = module.input_transform(input)
-    weight = module.weight
+    weight, bias = module.weight, module.bias
     if module.weight_transform is not None:
         weight = module.weight_transform(weight)
-    output = F.linear(input, weight, module.bias)
-
-    # TODO: remove the ad-hoc here
+    elif module.weight_qconf.retain_fp:
+        weight, bias = detach_vars(weight, bias)
+    output = F.linear(input, weight, bias)
     if getattr(module, "gather_data", None):
-        module.gather_buffer["input"] = input.detach()
-        module.gather_buffer["weight"] = weight.detach()
-        module.gather_buffer["output"] = output.detach()
-
+        for name in module.gather_data:
+            module.gather_buffer[name] = locals()[name].detach()
     return output

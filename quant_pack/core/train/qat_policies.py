@@ -44,12 +44,20 @@ class EnableQuantAtIntervals(Hook):
     def _switch_quant_mode(self, runner):
         if _in_intervals(runner.epoch, self.intervals):
             quant_mode = self.quant_mode
-            in_qat = runner.mode == "train"
+            in_qat = True
         else:
             quant_mode = ("fp",)
             in_qat = False
-        if runner.model.quant_mode != quant_mode and isinstance(runner.model.module, DistributedDataParallel):
-            runner.model.module.find_unused_parameters = "quant" not in quant_mode
+        if isinstance(runner.model.module, DistributedDataParallel):
+            find_unused_param = "quant" not in quant_mode
+            if not find_unused_param:
+                for m in runner.model._quant_submodules:
+                    if m.weight_qconf.retain_fp or m.input_qconf.retain_fp:
+                        find_unused_param = True
+                        break
+            runner.model.module.find_unused_parameters = find_unused_param
+        if runner.model.quant_mode != quant_mode:
+            runner.logger.info(f"switch quant mode to: {quant_mode}, in QAT: {in_qat}")
         runner.model.quant_mode = quant_mode
         runner.model._in_qat = in_qat
 

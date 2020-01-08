@@ -123,23 +123,24 @@ class ParametrizedQuantWrapper(nn.Module):
             fp_layers = [re.compile(r) for r in fp_layers]
         for n, m in self.module.named_modules():
             if isinstance(m, self._quantable_types):
-                if fp_layers is not None and any(reg.match(n) for reg in fp_layers):
-                    pass
-                else:
-                    _register_parameters(
-                        m,
-                        ("w_lb", nn.Parameter(m.weight.detach().min())),
-                        ("w_ub", nn.Parameter(m.weight.detach().max())),
-                        ("a_lb", nn.Parameter(torch.tensor(0.))),
-                        ("a_ub", nn.Parameter(torch.tensor(1.))),
-                    )
-                    m.weight_qconf = QuantConfig(lb=m.w_lb, ub=m.w_ub, **self.quant_conf)
-                    m.input_qconf = QuantConfig(lb=m.a_lb, ub=m.a_ub, **self.quant_conf)
-                    self._quant_submodules.add(m)
+                _register_parameters(
+                    m,
+                    ("w_lb", nn.Parameter(m.weight.detach().min())),
+                    ("w_ub", nn.Parameter(m.weight.detach().max())),
+                    ("a_lb", nn.Parameter(torch.tensor(0.))),
+                    ("a_ub", nn.Parameter(torch.tensor(1.))),
+                )
+                m.weight_qconf = QuantConfig(lb=m.w_lb, ub=m.w_ub, **self.quant_conf)
+                m.input_qconf = QuantConfig(lb=m.a_lb, ub=m.a_ub, **self.quant_conf)
+                self._quant_submodules.add(m)
 
-                    if m not in self._fused_submodules:
-                        m.weight_transform = m.input_transform = None
-                        m.forward = MethodType(QUANT_FORWARD_FUNCTIONS[m.__class__], m)
+                if m not in self._fused_submodules:
+                    m.weight_transform = m.input_transform = None
+                    m.forward = MethodType(QUANT_FORWARD_FUNCTIONS[m.__class__], m)
+
+                if fp_layers is not None and any(reg.match(n) for reg in fp_layers):
+                    m.weight_qconf.retain_fp = True
+                    m.input_qconf.retain_fp = True
 
     def to_ddp(self, find_unused_parameters=True):
         assert dist.is_available() and dist.is_initialized()

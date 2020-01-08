@@ -16,10 +16,11 @@ def copy_to_cpu(x):
 
 class SaveActivationBuilder(HookBuilder):
 
-    def __init__(self, hook_reg, target_cls, inject_at_mode):
+    def __init__(self, hook_reg, target_cls, inject_at_mode, var_names):
         super(SaveActivationBuilder, self).__init__(phases=("forward_pre", "forward"), hook_reg=hook_reg)
         self.target_cls = re.compile(target_cls)
         self.inject_at_mode = inject_at_mode
+        self.var_names = var_names
         self.name_reg = {}
 
     def match(self, name, module):
@@ -33,7 +34,7 @@ class SaveActivationBuilder(HookBuilder):
         return quant_mode == self.inject_at_mode
 
     def _runtime_forward_pre_hook(self, module, input):
-        module.gather_data = True
+        module.gather_data = self.var_names
         module.gather_buffer = OrderedDict()
 
     def _runtime_forward_hook(self, module, input, output):
