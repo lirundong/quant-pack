@@ -49,7 +49,8 @@ def fused_conv_bn_forward(module, input):
                                          module.bn_momentum, module.bn_eps)
         if getattr(module, "gather_data", None):
             for name in module.gather_data:
-                module.gather_buffer[name] = locals()[name].detach()
+                if name in locals():
+                    module.gather_buffer[name] = locals()[name].detach()
         return normed_activation
 
     with torch.no_grad():

@@ -11,6 +11,27 @@ _registered_quantizers = {
 __all__ = ["QuantConfig"]
 
 
+class _SequentialLambdas:
+
+    def __init__(self, *args):
+        self.ops = []
+        for arg in args:
+            if callable(arg):
+                self.ops.append(arg)
+
+    def __call__(self, input):
+        for op in self.ops:
+            input = op(input)
+        return input
+
+
+def combine_optional_callables(*args):
+    if all(arg is None for arg in args):
+        return None
+    else:
+        return _SequentialLambdas(*args)
+
+
 class QuantConfig:
 
     def __init__(self, mode, bit_width, lb, ub, align_zero, prune_to_zero=False):
@@ -24,6 +45,7 @@ class QuantConfig:
 
         self._enabled = True
         self._quantizer = _registered_quantizers[self.mode]
+        self._manual_bias = None  # experimental
 
     def quant(self, enabled=True):
         self._enabled = enabled
@@ -50,9 +72,16 @@ class QuantConfig:
                     p_ub = q0_plus / 2
             else:
                 p_lb = p_ub = None
-            return lambda x: self._quantizer(x, self.lb, self.ub, self.bit_width, self.align_zero, p_lb, p_ub)
+            q_f = lambda x: self._quantizer(x, self.lb, self.ub, self.bit_width, self.align_zero, p_lb, p_ub)
         else:
-            return None
+            q_f = None
+
+        if self._manual_bias is not None:
+            bias_f = lambda x: x + x.detach().mul_(self._manual_bias)
+        else:
+            bias_f = None
+
+        return combine_optional_callables(q_f, bias_f)
 
     @property
     def params(self):

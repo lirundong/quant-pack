@@ -5,6 +5,7 @@ model:
   args:
     pretrained: false
   input_size: [1, 3, 224, 224]
+  init: kaiming_normal
 
 wrapper:
   name: ParametrizedQuantWrapper

@@ -1,9 +1,4 @@
-__BASE__: configs/GQ_Nets/resnet18_base.yaml
-
-wrapper:
-  args:
-    quant_conf:
-      prune_to_zero: true
+__BASE__: configs/GQ_Nets/resnet20_cifar10.yaml
 
 runtime_hooks:
   interval: 5
@@ -36,8 +31,10 @@ runtime_hooks:
           - *fp_act
           - *quant_act
         ce_loss_from: quant
-        abnormal_x_ub: null # 1.0
-        abnormal_y_lb: null # 10.0
+        abnormal_x_range: [0., 1.0]
+        abnormal_y_range: [10., .inf]
+        ideal_x_range: [5., .inf]
+        ideal_y_range: [-1.0, 1.0]
 
 eval:
   data_loader:
@@ -57,12 +54,5 @@ log:
     - type: EnhancedTBLoggerHook
       exit_after_one_plot: true
 
-dataset:
-  name: ImageNetST
-  args:
-    img_dir: /home/lirundong/HDD1/Datasets/ILSVRC2012/
-    meta_dir: /home/lirundong/HDD1/Datasets/ILSVRC2012/c200_meta_with_c1000_labels/  # 100k train, 10k val
-
-work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/res18_e120_b64x32_qa_seg_sw_detach_kl_w1.0_multi_domain/
-pre_trained: /home/lirundong/HDD1/Experiments/GQ-Nets/res18_e120_b64x32_qa_seg_sw_detach_kl_w1.0_multi_domain/pre_trained.pth  # model weights
-resume: /home/lirundong/HDD1/Experiments/GQ-Nets/res18_e120_b64x32_qa_seg_sw_detach_kl_w1.0_multi_domain/resume.pth  # quant params
+work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-diag/
+resume: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10/latest.pth

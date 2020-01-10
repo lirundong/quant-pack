@@ -60,5 +60,6 @@ def quant_linear_forward(module, input):
     output = F.linear(input, weight, bias)
     if getattr(module, "gather_data", None):
         for name in module.gather_data:
-            module.gather_buffer[name] = locals()[name].detach()
+            if name in locals():
+                module.gather_buffer[name] = locals()[name].detach()
     return output

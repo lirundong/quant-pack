@@ -95,9 +95,7 @@ def _update_dict_item(src_dict, k, v):
         return
 
 
-def build_cfg(args):
-    cfg = yaml.load(open(args.config, "r", encoding="utf-8"), Loader=yaml.SafeLoader)
-
+def _update_cfg_with_base(cfg):
     if cfg["__BASE__"]:
         base_path = cfg.pop("__BASE__")
         if not os.path.exists(base_path):
@@ -105,16 +103,20 @@ def build_cfg(args):
             project_root = Path(__file__).absolute().parents[2]
             base_path = os.path.join(project_root, base_path)
         base_cfg = yaml.load(open(base_path, "r", encoding="utf-8"), Loader=yaml.SafeLoader)
-    else:
-        base_cfg = {}
+        base_cfg = _update_cfg_with_base(base_cfg)
+        # strategies for merging configs:
+        #  - override lists in BASE by the counterparts in current config, such that
+        #    each param-group can get the latest, non-duplicated config;
+        #  - merge dicts recursively, such that derived config can be written as concisely as possible;
+        conf_merger = Merger([(list, "override"), (dict, "merge")], ["override"], ["override"])
+        conf_merger.merge(base_cfg, cfg)
+        cfg = base_cfg
+    return cfg
 
-    # strategies for merging configs:
-    #  - override lists in BASE by the counterparts in current config, such that
-    #    each param-group can get the latest, non-duplicated config;
-    #  - merge dicts recursively, such that derived config can be written as concisely as possible;
-    conf_merger = Merger([(list, "override"), (dict, "merge")], ["override"], ["override"])
-    conf_merger.merge(base_cfg, cfg)
-    cfg = base_cfg
+
+def build_cfg(args):
+    cfg = yaml.load(open(args.config, "r", encoding="utf-8"), Loader=yaml.SafeLoader)
+    cfg = _update_cfg_with_base(cfg)
 
     if args.override is not None:
         for k, v in args.override.items():

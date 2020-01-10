@@ -2,15 +2,18 @@
 
 from collections import OrderedDict
 
+from torch.nn.parallel import DistributedDataParallel
 from mmcv.runner import Hook
 
 from .activation_builder import SaveActivationBuilder, SaveAllValueBuilder
 from .activation_post_process import CosineDistancePostProcess, RelativeErrorPostProcess
+from .manual_bias_correction_builder import ManualBiasCorrectionBuilder
 
 # TODO: refactor these registries to class decorators
 BUILDERS = {
     SaveActivationBuilder.__name__: SaveActivationBuilder,
     SaveAllValueBuilder.__name__: SaveAllValueBuilder,
+    ManualBiasCorrectionBuilder.__name__: ManualBiasCorrectionBuilder,
 }
 
 POST_PROCESS = {

@@ -28,9 +28,9 @@ class CosineDistancePostProcess:
 
 
 # TODO: move following error analysis to separated module
-def relative_error(x, x_ref):
+def relative_error(x, x_ref, eps=1e-6):
     x_error = (x - x_ref) / x_ref
-    return torch.where(x_ref > 0, x_error, torch.zeros_like(x_ref))
+    return torch.where(x_ref.abs() > eps, x_error, torch.zeros_like(x_ref))
 
 
 def conv2d_input_weight_analysis(input_err, weight_err, kernel_size,
@@ -76,18 +76,22 @@ def unpack_indices(indices):
     return tuple(idx.squeeze(1) for idx in indices.split(1, 1))
 
 
-def get_abnormal_indices(x, y, x_cond, y_cond, k=10, sort_by="y"):
+def get_topk_conditional_indices(x, y, x_cond, y_cond, k=10, sort_by="y"):
     valid_idx = torch.nonzero(x_cond(x) & y_cond(y))
     valid_idx = unpack_indices(valid_idx)  # equivalent to `as_tuple=True` in PyTorch-1.3
     if sort_by == "y":
         abnormal_values = y[valid_idx]
     else:
         abnormal_values = x[valid_idx]
-    _, topk_idx = torch.topk(abnormal_values, k=k)
-    valid_topk_idx = tuple(idx[topk_idx] for idx in valid_idx)
-    topk_x = x[valid_idx][topk_idx]
-    topk_y = y[valid_idx][topk_idx]
-    return valid_topk_idx, topk_x, topk_y
+    k = min(k, abnormal_values.numel())
+    if k == 0:
+        return None, None, None
+    else:
+        _, topk_idx = torch.topk(abnormal_values, k=k)
+        valid_topk_idx = tuple(idx[topk_idx] for idx in valid_idx)
+        topk_x = x[valid_idx][topk_idx]
+        topk_y = y[valid_idx][topk_idx]
+        return valid_topk_idx, topk_x, topk_y
 
 
 def unfold_conv2d_inputs(*inputs, **conv_params):
@@ -142,8 +146,8 @@ def select_topk_by_reference(k, ref, *srcs, dim=-1):
     return ret
 
 
-def fetch_abnormal_topk_inputs_weights(output_index, output_w, input_err, weight_err, input_fp, weight_fp,
-                                       input_q, weight_q, module_type, k=3, **op_params):
+def fetch_inputs_weights_from_output_indices(output_index, output_width, input_err, weight_err, input_fp, weight_fp,
+                                             input_q, weight_q, module_type, k=3, **op_params):
     assert module_type in ("Conv2d", "Linear")
     if module_type == "Conv2d":
         # output_idx: [prev_k, 4]
@@ -152,7 +156,7 @@ def fetch_abnormal_topk_inputs_weights(output_index, output_w, input_err, weight
         input_err, input_fp, input_q = unfold_conv2d_inputs(input_err, input_fp, input_q, **op_params)
         weight_err, weight_fp, weight_q = unfold_conv2d_weights(weight_err, weight_fp, weight_q)
         n_idx, c_out_idx, y, x = output_index  # each index is 1d tensor with length=`k` in `get_abnormal_indices`
-        spatial_idx = y * output_w + x
+        spatial_idx = y * output_width + x
         # selected input/weight size: [prev_k, num_receptive]
         input_err, input_fp, input_q = select_conv2d_inputs(n_idx, spatial_idx, input_err, input_fp, input_q)
     elif module_type == "Linear":
@@ -238,7 +242,10 @@ def pairwise(iterable):
 
 class RelativeErrorPostProcess:
 
-    def __init__(self, apply_to, ce_loss_from, abnormal_x_ub=None, abnormal_y_lb=None, out_err_topn=10, in_err_topk=3):
+    def __init__(self, apply_to, ce_loss_from,
+                 abnormal_x_range=None, abnormal_y_range=None,
+                 ideal_x_range=None, ideal_y_range=None,
+                 out_err_topn=10, in_err_topk=3):
         assert len(apply_to) == 2, "currently we only support pair-wise comparison"
         # the first registry is reference, second contains outputs with error
         self.apply_to = apply_to
@@ -246,11 +253,16 @@ class RelativeErrorPostProcess:
         # currently we only filter (small x error, large y error) points
         self.out_err_topn = out_err_topn
         self.in_err_topk = in_err_topk
-        if abnormal_x_ub is not None or abnormal_y_lb is not None:
-            self.x_cond = lambda x: x < abnormal_x_ub
-            self.y_cond = lambda y: abnormal_y_lb <= y
+        if abnormal_x_range is not None or abnormal_y_range is not None:
+            self.abnormal_x_cond = lambda x: (abnormal_x_range[0] <= x) & (x < abnormal_x_range[1])
+            self.abnormal_y_cond = lambda y: (abnormal_y_range[0] <= y) & (y < abnormal_y_range[1])
         else:
-            self.x_cond = self.y_cond = None
+            self.abnormal_x_cond = self.abnormal_y_cond = None
+        if ideal_x_range is not None or ideal_y_range is not None:
+            self.ideal_x_cond = lambda x: (ideal_x_range[0] <= x) & (x < ideal_x_range[1])
+            self.ideal_y_cond = lambda y: (ideal_y_range[0] <= y) & (y < ideal_y_range[1])
+        else:
+            self.ideal_x_cond = self.ideal_y_cond = None
 
     def after_iter(self, input_reg, outputs):
         ref_reg = input_reg[self.apply_to[0]]
@@ -263,9 +275,14 @@ class RelativeErrorPostProcess:
         per_layer_err["per_instance_ce_loss"] = ce_loss.to("cpu").clone()
 
         for k in tqdm(ref_reg, desc=f"{self.__class__.__name__}"):
-            input_err = relative_error(with_err_reg[k]["input"], ref_reg[k]["input"])
-            output_err = relative_error(with_err_reg[k]["output"], ref_reg[k]["output"])
-            weight_err = relative_error(with_err_reg[k]["weight"], ref_reg[k]["weight"])
+            output_name = "output" if "output" in ref_reg[k] else "pre_activation"
+            ref_input, ref_weight, ref_output = \
+                ref_reg[k]["input"], ref_reg[k]["weight"], ref_reg[k][output_name]
+            with_err_input, with_err_weight, with_err_output = \
+                with_err_reg[k]["input"], with_err_reg[k]["weight"], with_err_reg[k][output_name]
+            input_err = relative_error(with_err_input, ref_input)
+            output_err = relative_error(with_err_output, ref_output)
+            weight_err = relative_error(with_err_weight, ref_weight)
             module_type = ref_reg[k]["type"]
             if module_type == "Conv2d":
                 conv_param = ref_reg[k]["param"]
@@ -285,33 +302,62 @@ class RelativeErrorPostProcess:
                 # "weight": ref_reg[k]["weight"],
             }
 
-            if self.x_cond or self.y_cond:
+            if self.abnormal_x_cond or self.abnormal_y_cond:
                 abnormal_indices, abnormal_input_err_mean, abnormal_output_err = \
-                    get_abnormal_indices(input_err_mean, output_err, self.x_cond, self.y_cond, self.out_err_topn)
-                output_w = output_err.size(3) if module_type == "Conv2d" else None
+                    get_topk_conditional_indices(input_err_mean, output_err,
+                                                 self.abnormal_x_cond, self.abnormal_y_cond, self.out_err_topn)
+                if abnormal_indices is None:
+                    continue
+                output_width = output_err.size(3) if module_type == "Conv2d" else None
                 abnormal_x_fp, abnormal_x_q, abnormal_w_fp, abnormal_w_q = \
-                    fetch_abnormal_topk_inputs_weights(abnormal_indices, output_w,
-                                                       input_err, weight_err,
-                                                       ref_reg[k]["input"], ref_reg[k]["weight"],
-                                                       with_err_reg[k]["input"], with_err_reg[k]["weight"],
-                                                       module_type, self.in_err_topk, **ref_reg[k].get("param", {}))
+                    fetch_inputs_weights_from_output_indices(abnormal_indices, output_width,
+                                                             input_err, weight_err,
+                                                             ref_input, ref_weight,
+                                                             with_err_input, with_err_weight,
+                                                             module_type, self.in_err_topk, **ref_reg[k].get("param", {}))
                 abnormal_report = tensor_to_table(
                     input_err_mean=abnormal_input_err_mean,
                     output_err=abnormal_output_err,
-                    output_fp=ref_reg[k]["output"][abnormal_indices],
-                    output_q=with_err_reg[k]["output"][abnormal_indices],
+                    output_fp=ref_output[abnormal_indices],
+                    output_q=with_err_output[abnormal_indices],
                     input_fp=abnormal_x_fp,
                     input_q=abnormal_x_q,
                     weight_fp=abnormal_w_fp,
                     weight_q=abnormal_w_q,
                 )
-                x_lb, x_ub, x_delta = with_err_reg[k]["input_qconf"]
-                w_lb, w_ub, w_delta = with_err_reg[k]["weight_qconf"]
-                qconf_report = scalar_to_table(
-                    x_lb=x_lb, x_ub=x_ub, x_delta=x_delta,
-                    w_lb=w_lb, w_ub=w_ub, w_delta=w_delta,
-                )
                 per_layer_err[k]["abnormal_report"] = abnormal_report
-                per_layer_err[k]["qconf_report"] = qconf_report
+
+            if self.ideal_x_cond or self.ideal_y_cond:
+                ideal_indices, ideal_input_err_mean, ideal_output_err = \
+                    get_topk_conditional_indices(input_err_mean, output_err,
+                                                 self.ideal_x_cond, self.ideal_y_cond, self.out_err_topn, sort_by="x")
+                if ideal_indices is None:
+                    continue
+                output_width = output_err.size(3) if module_type == "Conv2d" else None
+                ideal_x_fp, ideal_x_q, ideal_w_fp, ideal_w_q = \
+                    fetch_inputs_weights_from_output_indices(ideal_indices, output_width,
+                                                             input_err, weight_err,
+                                                             ref_input, ref_weight,
+                                                             with_err_input, with_err_weight,
+                                                             module_type, self.in_err_topk, **ref_reg[k].get("param", {}))
+                ideal_report = tensor_to_table(
+                    input_err_mean=ideal_input_err_mean,
+                    output_err=ideal_output_err,
+                    output_fp=ref_output[ideal_indices],
+                    output_q=with_err_output[ideal_indices],
+                    input_fp=ideal_x_fp,
+                    input_q=ideal_x_q,
+                    weight_fp=ideal_w_fp,
+                    weight_q=ideal_w_q,
+                )
+                per_layer_err[k]["ideal_report"] = ideal_report
+
+            x_lb, x_ub, x_delta = with_err_reg[k]["input_qconf"]
+            w_lb, w_ub, w_delta = with_err_reg[k]["weight_qconf"]
+            qconf_report = scalar_to_table(
+                x_lb=x_lb, x_ub=x_ub, x_delta=x_delta,
+                w_lb=w_lb, w_ub=w_ub, w_delta=w_delta,
+            )
+            per_layer_err[k]["qconf_report"] = qconf_report
 
         return per_layer_err
