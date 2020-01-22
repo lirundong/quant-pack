@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
 
-from .runtime_hook import InjectRuntimeHook
+from .runtime_hook import RuntimeHook, WithPostprocessRuntimeHook
 
-__all__ = ["InjectRuntimeHook"]
+__all__ = ["RuntimeHook", "WithPostprocessRuntimeHook"]

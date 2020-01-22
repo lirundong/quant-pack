@@ -298,8 +298,8 @@ class RelativeErrorPostProcess:
                 "input_error_std": input_err_std,
                 "input_error": input_err,
                 "output_error": output_err,
-                # "weight_error": weight_err,
-                # "weight": ref_reg[k]["weight"],
+                "weight_error": weight_err,
+                "weight": ref_reg[k]["weight"],
             }
 
             if self.abnormal_x_cond or self.abnormal_y_cond:

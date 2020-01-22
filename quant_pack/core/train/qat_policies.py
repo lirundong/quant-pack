@@ -9,6 +9,7 @@ from typing import List, Tuple, Optional
 from mmcv.runner import Hook, Runner
 
 from quant_pack.core.wrapper.hook.activation_builder import HijackModuleOutputBuilder
+from quant_pack.core.quant.config import QuantMode
 
 VALID_QUANT_MODE = ("fp", "quant", "qw_fa", "fw_qa")
 VALID_GRANULARITY = ("epoch", "iter")
@@ -87,7 +88,8 @@ class SetupQuantOnce(Hook):
 
     def before_run(self, runner):
         runner.model.quant_mode = self.quant_mode
-        runner.model.module.find_unused_parameters = "quant" not in self.quant_mode
+        if isinstance(runner.model.module, DistributedDataParallel):
+            runner.model.module.find_unused_parameters = "quant" not in self.quant_mode
 
     def before_train_epoch(self, runner):
         runner.model._in_qat = any(mode != "fp" for mode in self.quant_mode)

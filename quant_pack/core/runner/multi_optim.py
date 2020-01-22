@@ -87,7 +87,10 @@ class MultiOptimRunner(Runner):
             self.register_hook(logger_hook, priority="VERY_LOW")
 
     def inject_runtime_hooks(self, interval, hooks, post_process):
-        inject_hook = wrapper.InjectRuntimeHook(interval, hooks, post_process)
+        if post_process is not None:
+            inject_hook = wrapper.WithPostprocessRuntimeHook(interval, hooks, post_process)
+        else:
+            inject_hook = wrapper.RuntimeHook(interval, hooks)
         self.register_hook(inject_hook)
 
     def current_lr(self):

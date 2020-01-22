@@ -11,7 +11,7 @@ wrapper:
   name: ParametrizedQuantWrapper
   args:
     quant_conf:
-      mode: linear
+      method: linear
       bit_width: 4
       align_zero: false
     do_fold_bn: false

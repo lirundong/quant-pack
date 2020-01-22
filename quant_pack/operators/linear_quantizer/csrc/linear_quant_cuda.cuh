@@ -78,7 +78,7 @@ __global__ void linear_quant_forward_kernel(
     const T x = x_t[idx];
     T x_clamped = CLAMP(x, lb, ub);
     T i_real = (x_clamped - lb) / delta;
-    T i_round = round(i_real);
+    T i_round = rint(i_real);
     T qx = i_round * delta + lb;
     T i_diff = i_round - i_real;
     i_diff /= n;

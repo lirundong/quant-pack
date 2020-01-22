@@ -4,7 +4,7 @@ wrapper:
   name: ParametrizedQuantWrapper
   args:
     quant_conf:
-      mode: linear
+      method: linear
       bit_width: 2
       align_zero: false
     do_fold_bn: false
@@ -79,4 +79,5 @@ eval:
     - fp
     - quant
 
-work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-fp-first-last
+work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-fp-first-last/tmp
+# resume: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-fp-first-last/epoch_147.pth

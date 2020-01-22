@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 
-from quant_pack.core.quant.config import QuantConfig
+from quant_pack.core.quant.config import QuantConfig, QuantMode
 from quant_pack.core.train.qat_policies import VALID_QUANT_MODE
 from quant_pack.core.wrapper.hook.calibration_builder import ActivationCalibrationBuilder
 from ._registries import FUSED_FORWARD_FUNCTIONS, \
@@ -144,9 +144,8 @@ class ParametrizedQuantWrapper(nn.Module):
 
     def to_ddp(self, find_unused_parameters=True):
         assert dist.is_available() and dist.is_initialized()
-        if isinstance(self.module, DistributedDataParallel):
-            raise RuntimeError("`module` is already DDP")
-        self.module = DistributedDataParallel(self.module, device_ids=[torch.cuda.current_device()],
+        self.module = DistributedDataParallel(self.module,
+                                              device_ids=[torch.cuda.current_device()],
                                               find_unused_parameters=find_unused_parameters)
 
     def to_torch_quant(self):
@@ -171,7 +170,7 @@ class ParametrizedQuantWrapper(nn.Module):
             optim = torch.optim.__dict__[optim_type]([optim_params], **optim_group["args"])
             ret[optim_name] = optim
         if len(ret) == 1:
-            ret = next(iter(ret.values()))
+            ret = optim
         return ret
 
     def quant_w(self, enabled=True):
@@ -193,39 +192,27 @@ class ParametrizedQuantWrapper(nn.Module):
     @contextmanager
     def _inject_runtime_hooks(self, runtime_hooks):
         need_recover = False
-        handles = []
-        if runtime_hooks:
-            if isinstance(self.module, DistributedDataParallel):
-                # 前方高能，套娃警告
-                def _ddp_forward(_module, *_args, **_kwargs):
-                    _handles = []
-                    for _n, _m in _module.named_modules():
-                        for _hook in runtime_hooks:
-                            if _hook.match(_n, _m):
-                                for _method, _hook in _hook.get_hooks():
-                                    _handle = getattr(_m, _method)(_hook)
-                                    _handles.append(_handle)
-                    _outputs = self._module_forward(_module, *_args, **_kwargs)
-                    for _handle in _handles:
-                        _handle.remove()
-                    return _outputs
-
-                self.module.module.forward = MethodType(_ddp_forward, self.module.module)
-                need_recover = True
-            else:
-                for n, m in self.module.named_modules():
-                    for hook in runtime_hooks:
-                        if hook.match(n, m):
-                            for method, hook in hook.get_hooks():
-                                handle = getattr(m, method)(hook)
-                                handles.append(handle)
+        if runtime_hooks and isinstance(self.module, DistributedDataParallel):
+            # 前方高能，套娃警告
+            def _ddp_forward(_module, *_args, **_kwargs):
+                _handles = []
+                for _n, _m in _module.named_modules():
+                    for _hook in runtime_hooks:
+                        if _hook.match(_n, _m):
+                            for _method, _hook in _hook.get_hooks():
+                                _handle = getattr(_m, _method)(_hook)
+                                _handles.append(_handle)
+                _outputs = self._module_forward(_module, *_args, **_kwargs)
+                for _handle in _handles:
+                    _handle.remove()
+                return _outputs
+            self.module.module.forward = MethodType(_ddp_forward, self.module.module)
+            need_recover = True
         try:
             yield
         finally:
             if need_recover:
                 self.module.module.forward = MethodType(self._module_forward, self.module.module)
-            for handle in handles:
-                handle.remove()
 
     def forward(self, *inputs, runtime_hooks=None, **kwargs):
         with self._inject_runtime_hooks(runtime_hooks):
@@ -233,40 +220,31 @@ class ParametrizedQuantWrapper(nn.Module):
         return outputs
 
     @staticmethod
-    def batch_processor(model, data_batch, train_mode, device, quant_mode=None):
+    def batch_processor(model, data_batch, train_mode, device, quant_mode=None, runtime_hook_updater=None):
         if quant_mode is None:
             quant_mode = model.quant_mode
-            if any(mode != "fp" for mode in quant_mode):
-                model._in_qat = True
-            else:
-                model._in_qat = False
-        runtime_hooks = getattr(model, "runtime_hooks", {})
+        if any(mode != QuantMode.FWFA for mode in quant_mode):
+            model._in_qat = True
+        else:
+            model._in_qat = False
         img, label = data_batch
         outputs = {"label": label.to(device, non_blocking=True)}
         for i, mode in enumerate(quant_mode):
-            assert mode in VALID_QUANT_MODE, f"invalid model running mode: {mode}"
-            if mode == "fp":
+            if isinstance(mode, str):
+                mode = QuantMode.get(mode)
+            if QuantMode.FW in mode:
                 model.fp_w()
-                model.fp_a()
-            elif mode == "quant":
+            else:
                 model.quant_w()
-                model.quant_a()
-            elif mode == "qw_fa":
-                model.quant_w()
+            if QuantMode.FA in mode:
                 model.fp_a()
-            elif mode == "fw_qa":
-                model.fp_w()
+            else:
                 model.quant_a()
-
-            activated_hooks = []
-            for _, hook in runtime_hooks.items():
-                if hasattr(hook, "set_output_reg"):
-                    hook.set_output_reg(outputs)
-                if hook.inject_at(mode):
-                    activated_hooks.append(hook)
-
-            outputs[mode] = model(img.to(device, non_blocking=True), runtime_hooks=activated_hooks)
-
+            if runtime_hook_updater is not None:
+                runtime_hooks = runtime_hook_updater(mode)
+            else:
+                runtime_hooks = None
+            outputs[f"{mode}"] = model(img.to(device, non_blocking=True), runtime_hooks=runtime_hooks)
         return outputs
 
     @torch.no_grad()

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import math
+from enum import Flag, auto
 
 from quant_pack.core.quant.functional import fake_linear_quant
 
@@ -8,7 +9,7 @@ _registered_quantizers = {
     "linear": fake_linear_quant,
 }
 
-__all__ = ["QuantConfig"]
+__all__ = ["QuantConfig", "QuantMode"]
 
 
 class _SequentialLambdas:
@@ -16,7 +17,7 @@ class _SequentialLambdas:
     def __init__(self, *args):
         self.ops = []
         for arg in args:
-            if callable(arg):
+            if arg is not None:
                 self.ops.append(arg)
 
     def __call__(self, input):
@@ -32,10 +33,46 @@ def combine_optional_callables(*args):
         return _SequentialLambdas(*args)
 
 
+class QuantMode(Flag):
+    QW = auto()
+    QA = auto()
+    FW = ~QW
+    FA = ~QA
+    QWQA = QW | QA
+    FWFA = FW | FA
+    QWFA = QW | FA
+    FWQA = FW | QA
+
+    # BC: build QuantMode from VALID_QUANT_MODE in qat_policies
+    @classmethod
+    def get(cls, mode):
+        assert isinstance(mode, str)
+        if mode == "quant":
+            return cls.QWQA
+        elif mode == "fp":
+            return cls.FWFA
+        elif mode == "qw_fa":
+            return cls.QWFA
+        elif mode == "fw_qa":
+            return cls.FWQA
+
+    def __str__(self):
+        if self is QuantMode.FWFA:
+            return "fp"
+        elif self is QuantMode.QWQA:
+            return "quant"
+        elif self is QuantMode.QWFA:
+            return "qw_fa"
+        elif self is QuantMode.FWQA:
+            return "fw_qa"
+        else:
+            return super(QuantMode, self).__str__()
+
+
 class QuantConfig:
 
-    def __init__(self, mode, bit_width, lb, ub, align_zero, prune_to_zero=False):
-        self.mode = mode
+    def __init__(self, method, bit_width, lb, ub, align_zero, prune_to_zero=False):
+        self.method = method
         self.bit_width = bit_width
         self.lb = lb
         self.ub = ub
@@ -44,7 +81,7 @@ class QuantConfig:
         self.retain_fp = False
 
         self._enabled = True
-        self._quantizer = _registered_quantizers[self.mode]
+        self._quantizer = _registered_quantizers[self.method]
         self._manual_bias = None  # experimental
 
     def quant(self, enabled=True):

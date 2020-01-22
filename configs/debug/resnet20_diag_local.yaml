@@ -31,7 +31,7 @@ runtime_hooks:
           - *fp_act
           - *quant_act
         ce_loss_from: quant
-        abnormal_x_range: [0., 1.0]
+        abnormal_x_range: [0., 0.1]
         abnormal_y_range: [10., .inf]
         ideal_x_range: [5., .inf]
         ideal_y_range: [-1.0, 1.0]
