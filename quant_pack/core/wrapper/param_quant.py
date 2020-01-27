@@ -12,8 +12,6 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 
 from quant_pack.core.quant.config import QuantConfig, QuantMode
-from quant_pack.core.train.qat_policies import VALID_QUANT_MODE
-from quant_pack.core.wrapper.hook.calibration_builder import ActivationCalibrationBuilder
 from ._registries import FUSED_FORWARD_FUNCTIONS, \
     QUANT_FORWARD_FUNCTIONS
 
@@ -220,13 +218,9 @@ class ParametrizedQuantWrapper(nn.Module):
         return outputs
 
     @staticmethod
-    def batch_processor(model, data_batch, train_mode, device, quant_mode=None, runtime_hook_updater=None):
+    def batch_processor(model, data_batch, train_mode, device, runtime_hook, quant_mode=None):
         if quant_mode is None:
             quant_mode = model.quant_mode
-        if any(mode != QuantMode.FWFA for mode in quant_mode):
-            model._in_qat = True
-        else:
-            model._in_qat = False
         img, label = data_batch
         outputs = {"label": label.to(device, non_blocking=True)}
         for i, mode in enumerate(quant_mode):
@@ -240,15 +234,15 @@ class ParametrizedQuantWrapper(nn.Module):
                 model.fp_a()
             else:
                 model.quant_a()
-            if runtime_hook_updater is not None:
-                runtime_hooks = runtime_hook_updater(mode)
+            if runtime_hook is not None:
+                runtime_hooks = runtime_hook.update_hooks(mode)
             else:
                 runtime_hooks = None
             outputs[f"{mode}"] = model(img.to(device, non_blocking=True), runtime_hooks=runtime_hooks)
         return outputs
 
     @torch.no_grad()
-    def do_calibration(self, runner, calibration_step, calibration_percentile, device):
+    def do_calibration(self, runner, calibration_step, calibration_cfg, device, runtime_hook):
         runner.logger.info(f"start calibration at epoch {runner.epoch}, iter {runner.iter}")
         for m in self._quant_submodules:
             # TODO: handle BN-folding?
@@ -256,12 +250,14 @@ class ParametrizedQuantWrapper(nn.Module):
             m.w_ub.copy_(m.weight.max())
         self.quant_w()
         self.fp_a()
-        act_calib_hook = ActivationCalibrationBuilder(calibration_percentile)
+        calib_hook_name = runtime_hook.add_builder(calibration_cfg, enabled=True)
+        runtime_hooks = runtime_hook.update_hooks(QuantMode.QWFA | QuantMode.Calib)
         for i, data_batch in enumerate(runner.data_loader):
             if i >= calibration_step:
                 break
             img, _ = data_batch
-            _ = self(img.to(device, non_blocking=True), runtime_hooks=[act_calib_hook])
+            _ = self(img.to(device, non_blocking=True), runtime_hooks=runtime_hooks)
+        runtime_hook.remove_builder(calib_hook_name)
         for m in self._fused_submodules:
             if not isinstance(m, nn.BatchNorm2d):
                 m._running_mean_q = m._running_mean_fp.clone()

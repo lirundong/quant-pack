@@ -25,7 +25,7 @@ class HookBuilder:
         if self._enable_reg is None:
             return True
         else:
-            return bool(self._enable_reg[id(self)])
+            return self._enable_reg[id(self)]
 
     def forward_hook(self, module, input, output):
         if self.enabled:
@@ -39,10 +39,10 @@ class HookBuilder:
         if self.enabled:
             return self._runtime_backward_hook(module, grad_input, grad_output)
 
-    def match(self, name, module):
+    def match(self, *args, **kwargs):
         raise NotImplementedError()
 
-    def inject_at(self, quant_mode):
+    def inject_at(self, *args, **kwargs):
         raise NotImplementedError()
 
     def get_hooks(self):

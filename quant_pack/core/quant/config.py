@@ -36,6 +36,7 @@ def combine_optional_callables(*args):
 class QuantMode(Flag):
     QW = auto()
     QA = auto()
+    Calib = auto()
     FW = ~QW
     FA = ~QA
     QWQA = QW | QA
@@ -57,13 +58,13 @@ class QuantMode(Flag):
             return cls.FWQA
 
     def __str__(self):
-        if self is QuantMode.FWFA:
+        if QuantMode.FWFA in self:
             return "fp"
-        elif self is QuantMode.QWQA:
+        elif QuantMode.QWQA in self:
             return "quant"
-        elif self is QuantMode.QWFA:
+        elif QuantMode.QWFA in self:
             return "qw_fa"
-        elif self is QuantMode.FWQA:
+        elif QuantMode.FWQA in self:
             return "fw_qa"
         else:
             return super(QuantMode, self).__str__()

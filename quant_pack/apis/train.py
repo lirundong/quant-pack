@@ -56,10 +56,8 @@ def _local_train(cfg):
     optims = model.get_optimizers(*cfg.train.optim_groups)
     trainer = runner.MultiOptimRunner(model, model.batch_processor, optims, cfg.work_dir)
     trainer.register_qat_hooks(cfg.train.loss, cfg.train.metrics, cfg.train.lr_policies,
-                               cfg.train.qat_policies, cfg.train.ckpt_interval)
+                               cfg.train.qat_policies, cfg.train.ckpt_interval, cfg.runtime_hooks)
 
-    if cfg.runtime_hooks:
-        trainer.inject_runtime_hooks(**cfg.runtime_hooks)
     if cfg.eval:
         trainer.register_eval_hooks(cfg.eval.metrics)
     if cfg.log:
@@ -67,7 +65,8 @@ def _local_train(cfg):
     if cfg.resume:
         trainer.resume(cfg.resume)
 
-    trainer.run([train_loader, eval_loader], item_to_tuple(*cfg.work_flow), cfg.epochs, device=cfg.device)
+    trainer.run([train_loader, eval_loader], item_to_tuple(*cfg.work_flow), cfg.epochs,
+                device=cfg.device, runtime_hook=trainer.runtime_hook)
 
 
 def train_classifier(cfg):

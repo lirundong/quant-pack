@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import collections
+import logging
 from itertools import chain
 
 from torch.optim.optimizer import Optimizer
@@ -35,6 +36,17 @@ class _OptimDict(dict):
 
 class MultiOptimRunner(Runner):
 
+    def __init__(self,
+                 model,
+                 batch_processor,
+                 optimizer=None,
+                 work_dir=None,
+                 log_level=logging.INFO,
+                 logger=None):
+        super(MultiOptimRunner, self).__init__(model, batch_processor, optimizer,
+                                               work_dir, log_level, logger)
+        self.runtime_hook = None
+
     def init_optimizer(self, optimizer):
         if isinstance(optimizer, dict) and \
            all(isinstance(optim, Optimizer) for _, optim in optimizer.items()):
@@ -42,7 +54,8 @@ class MultiOptimRunner(Runner):
         else:
             return super(MultiOptimRunner, self).init_optimizer(optimizer)
 
-    def register_qat_hooks(self, loss, metrics, lr_policies, qat_policies, ckpt_interval=1):
+    def register_qat_hooks(self, loss, metrics, lr_policies, qat_policies,
+                           ckpt_interval=1, runtime_hook=None):
         assert isinstance(loss, dict)
         assert isinstance(metrics, (tuple, list))
         assert isinstance(lr_policies, (tuple, list))
@@ -64,6 +77,14 @@ class MultiOptimRunner(Runner):
             else:
                 priority = "NORMAL"
             self.register_hook(hook, priority)
+
+        if runtime_hook is not None:
+            interval = runtime_hook["interval"]
+            hooks = runtime_hook["hooks"]
+            post_process = runtime_hook.get("post_process")
+            self.inject_runtime_hooks(interval, hooks, post_process)
+        else:
+            self.inject_runtime_hooks(-1, [], None)
 
     def register_eval_hooks(self, metrics):
         for metric in metrics:
@@ -88,10 +109,11 @@ class MultiOptimRunner(Runner):
 
     def inject_runtime_hooks(self, interval, hooks, post_process):
         if post_process is not None:
-            inject_hook = wrapper.WithPostprocessRuntimeHook(interval, hooks, post_process)
+            runtime_hook = wrapper.WithPostprocessRuntimeHook(interval, hooks, post_process)
         else:
-            inject_hook = wrapper.RuntimeHook(interval, hooks)
-        self.register_hook(inject_hook)
+            runtime_hook = wrapper.RuntimeHook(interval, hooks)
+        self.register_hook(runtime_hook)
+        self.runtime_hook = runtime_hook
 
     def current_lr(self):
         if self.mode == "val" and self.optimizer is None:

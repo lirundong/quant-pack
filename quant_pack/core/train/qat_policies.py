@@ -28,18 +28,18 @@ def _in_intervals(i: int, intervals: IntervalT) -> Optional[Tuple[int, int]]:
 class EnableQuantAtIntervals(Hook):
 
     def __init__(self, quant_mode: str, granularity: str, intervals: IntervalT,
-                 always_enable_fp: bool = False, calibrate_steps: int = 1, calibrate_percentile: float = 0.99):
+                 always_enable_fp: bool = False, calibrate_steps: int = 1, calibrate_cfg: dict = {}):
         assert quant_mode in VALID_QUANT_MODE
         assert granularity in VALID_GRANULARITY
         if always_enable_fp and quant_mode != "fp":
             quant_mode = (quant_mode, "fp")
         else:
             quant_mode = (quant_mode,)
-        self.quant_mode = quant_mode
+        self.quant_mode = tuple(QuantMode.get(m) for m in quant_mode)
         self.granularity = granularity
         self.intervals = intervals
         self.calibrate_steps = calibrate_steps
-        self.calibrate_percentile = calibrate_percentile
+        self.calibrate_cfg = calibrate_cfg
         self.do_calibration_at = min(i[0] for i in intervals)
 
     def _switch_quant_mode(self, runner):
@@ -47,10 +47,10 @@ class EnableQuantAtIntervals(Hook):
             quant_mode = self.quant_mode
             in_qat = True
         else:
-            quant_mode = ("fp",)
+            quant_mode = (QuantMode.FWFA,)
             in_qat = False
         if isinstance(runner.model.module, DistributedDataParallel):
-            find_unused_param = "quant" not in quant_mode
+            find_unused_param = QuantMode.QWQA not in quant_mode
             if not find_unused_param:
                 for m in runner.model._quant_submodules:
                     if m.weight_qconf.retain_fp or m.input_qconf.retain_fp:
@@ -64,7 +64,7 @@ class EnableQuantAtIntervals(Hook):
 
     def _do_calibration(self, runner):
         device = torch.device(f"cuda:{torch.cuda.current_device()}")
-        runner.model.do_calibration(runner, self.calibrate_steps, self.calibrate_percentile, device)
+        runner.model.do_calibration(runner, self.calibrate_steps, self.calibrate_cfg, device, runner.runtime_hook)
 
     def before_train_epoch(self, runner: Runner):
         if self.granularity == "epoch":
@@ -84,15 +84,15 @@ class SetupQuantOnce(Hook):
     def __init__(self, quant_mode):
         if isinstance(quant_mode, str):
             quant_mode = (quant_mode, )
-        self.quant_mode = quant_mode
+        self.quant_mode = tuple(QuantMode.get(m) for m in quant_mode)
 
     def before_run(self, runner):
         runner.model.quant_mode = self.quant_mode
         if isinstance(runner.model.module, DistributedDataParallel):
-            runner.model.module.find_unused_parameters = "quant" not in self.quant_mode
+            runner.model.module.find_unused_parameters = QuantMode.QWQA not in self.quant_mode
 
     def before_train_epoch(self, runner):
-        runner.model._in_qat = any(mode != "fp" for mode in self.quant_mode)
+        runner.model._in_qat = any(mode != QuantMode.FWFA for mode in self.quant_mode)
 
 
 class IntervalWarmupedVariable(Hook):

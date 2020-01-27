@@ -8,6 +8,7 @@ runtime_hooks:
       args:
         target_cls: (Conv[\d]d|Linear)
         inject_at_mode: fp
+        need_reg: true
         var_names:
           - input
           - weight
@@ -18,6 +19,7 @@ runtime_hooks:
       args:
         target_cls: (Conv[\d]d|Linear)
         inject_at_mode: quant
+        need_reg: true
         var_names:
           - input
           - weight

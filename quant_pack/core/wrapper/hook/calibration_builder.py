@@ -3,17 +3,21 @@
 import torch
 import torch.distributed as dist
 
+from quant_pack.core.quant.config import QuantMode
 from .base_builder import HookBuilder
 
 
 class ActivationCalibrationBuilder(HookBuilder):
 
-    def __init__(self, percentile=0.99):
-        super(ActivationCalibrationBuilder, self).__init__(phases=("forward", ), hook_reg=None)
+    def __init__(self, hook_reg, enable_reg, percentile=0.99):
+        super(ActivationCalibrationBuilder, self).__init__("forward", hook_reg, enable_reg)
         self.percentile = percentile
 
     def match(self, name, module):
         return hasattr(module, "input_qconf")
+
+    def inject_at(self, quant_mode):
+        return QuantMode.Calib in quant_mode
 
     def _runtime_forward_hook(self, module, input, output):
         if isinstance(input, tuple):

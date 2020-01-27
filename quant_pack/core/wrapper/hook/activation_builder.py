@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 
 from .base_builder import HookBuilder
+from quant_pack.core.quant.config import QuantMode
 
 
 def copy_to_cpu(x):
@@ -16,10 +17,10 @@ def copy_to_cpu(x):
 
 class SaveActivationBuilder(HookBuilder):
 
-    def __init__(self, hook_reg, target_cls, inject_at_mode, var_names):
-        super(SaveActivationBuilder, self).__init__(phases=("forward_pre", "forward"), hook_reg=hook_reg)
+    def __init__(self, hook_reg, enable_reg, target_cls, inject_at_mode, var_names):
+        super(SaveActivationBuilder, self).__init__(("forward_pre", "forward"), hook_reg, enable_reg)
         self.target_cls = re.compile(target_cls)
-        self.inject_at_mode = inject_at_mode
+        self.inject_at_mode = QuantMode.get(inject_at_mode)
         self.var_names = var_names
         self.name_reg = {}
 
@@ -31,7 +32,7 @@ class SaveActivationBuilder(HookBuilder):
             return False
 
     def inject_at(self, quant_mode):
-        return quant_mode == self.inject_at_mode
+        return self.inject_at_mode in quant_mode
 
     def _runtime_forward_pre_hook(self, module, input):
         module.gather_data = self.var_names
@@ -85,7 +86,7 @@ class HijackModuleOutputBuilder(HookBuilder):
         self._reg = output_reg
 
     def _runtime_forward_hook(self, module, input, output):
-        if self.current_mode == "fp":
+        if self.current_mode == QuantMode.FWFA:
             output = output.detach()
         name = f"{self.output_name}_{self.current_mode}"
         self._reg[name] = output

@@ -8,12 +8,14 @@ from mmcv.runner import Hook
 from .activation_builder import SaveActivationBuilder, SaveAllValueBuilder
 from .activation_post_process import CosineDistancePostProcess, RelativeErrorPostProcess
 from .manual_bias_correction_builder import ManualBiasCorrectionBuilder
+from .calibration_builder import ActivationCalibrationBuilder
 
 # TODO: refactor these registries to class decorators
 BUILDERS = {
     SaveActivationBuilder.__name__: SaveActivationBuilder,
     SaveAllValueBuilder.__name__: SaveAllValueBuilder,
     ManualBiasCorrectionBuilder.__name__: ManualBiasCorrectionBuilder,
+    ActivationCalibrationBuilder.__name__: ActivationCalibrationBuilder,
 }
 
 POST_PROCESS = {
@@ -34,20 +36,7 @@ class RuntimeHook(Hook):
         self.enabled_at_this_iter = False
 
         for builder_cfg in hook_builders:
-            hook_name = builder_cfg["name"]
-            hook_cls = builder_cfg["type"]
-            hook_args = builder_cfg["args"]
-            need_reg = hook_args.pop("need_reg", False)
-            if need_reg:
-                hook_reg = OrderedDict()
-                self.hook_regs[hook_name] = hook_reg
-            else:
-                hook_reg = None
-            if hook_cls not in BUILDERS:
-                hook_cls += "Builder"
-            hook_builder = BUILDERS[hook_cls](hook_reg=hook_reg, enable_reg=self.enable_reg, **hook_args)
-            self.named_builders[hook_name] = hook_builder
-            self.enable_reg[id(hook_builder)] = False
+            self.add_builder(builder_cfg)
 
     def before_run(self, runner):
         module = runner.model.module
@@ -75,11 +64,42 @@ class RuntimeHook(Hook):
         if self.enabled_at_this_iter:
             for name, builder in self.named_builders.items():
                 activated = builder.inject_at(quant_mode)
-                self.enable_reg[name] = activated
+                self.enable_reg[id(builder)] = activated
                 if activated:
                     activated_builders.append(builder)
         if self.is_ddp:
             return activated_builders
+
+    def add_builder(self, builder_cfg, enabled=False):
+        builder_name = builder_cfg["name"]
+        builder_cls = builder_cfg["type"]
+        builder_args = builder_cfg["args"]
+        need_reg = builder_args.pop("need_reg", False)
+        if need_reg:
+            hook_reg = OrderedDict()
+            self.hook_regs[builder_name] = hook_reg
+        else:
+            hook_reg = None
+        if builder_cls not in BUILDERS:
+            builder_cls += "Builder"
+        hook_builder = BUILDERS[builder_cls](hook_reg=hook_reg, enable_reg=self.enable_reg, **builder_args)
+        self.named_builders[builder_name] = hook_builder
+        self.enable_reg[id(hook_builder)] = enabled
+        return builder_name
+
+    def remove_builder(self, builder_name):
+        handles = []
+        for k, h in self.named_handles.items():
+            if k.startswith(builder_name):
+                handles.append((k, h))
+        for k, h in handles:
+            h.remove()
+            self.named_handles.pop(k)
+        if builder_name in self.named_builders:
+            builder = self.named_builders.pop(builder_name)
+            self.enable_reg.pop(id(builder))
+        if builder_name in self.hook_regs:
+            self.hook_regs.pop(builder_name)
 
 
 class WithPostprocessRuntimeHook(RuntimeHook):

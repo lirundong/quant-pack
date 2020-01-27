@@ -45,6 +45,8 @@ train:
           - [30, 80]
           - [90, 120]
           - [130, -1]
+        calibrate_cfg:
+          percentile: 0.99
     - name: ConstantVariable
       args:
         name: ce_loss_weight
@@ -77,5 +79,5 @@ eval:
     - fp
     - quant
 
-work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10
-resume: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10/latest.pth
+work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10/tmp
+# resume: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10/latest.pth

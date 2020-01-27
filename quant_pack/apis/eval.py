@@ -52,14 +52,16 @@ def _local_eval(cfg):
     evaluator.register_eval_hooks(cfg.eval.metrics)
 
     if cfg.runtime_hooks:
-        evaluator.inject_runtime_hooks(**cfg.runtime_hooks)
+        runtime_hook_updater = evaluator.inject_runtime_hooks(**cfg.runtime_hooks)
+    else:
+        runtime_hook_updater = None
     if cfg.log:
         evaluator.register_logger_hooks(cfg.log)
     if cfg.resume:
         evaluator.resume(cfg.resume, resume_optimizer=False)
 
     evaluator.call_hook("before_run")
-    evaluator.val(eval_loader, device=cfg.device, quant_mode=cfg.eval.quant_mode)
+    evaluator.val(eval_loader, device=cfg.device, quant_mode=cfg.eval.quant_mode, runtime_hook_updater=runtime_hook_updater)
 
 
 def eval_classifier(cfg):
