@@ -81,10 +81,16 @@ class EnableQuantAtIntervals(Hook):
 
 class SetupQuantOnce(Hook):
 
-    def __init__(self, quant_mode):
+    def __init__(self, quant_mode, calibrate_steps=1, calibrate_cfg={}):
         if isinstance(quant_mode, str):
             quant_mode = (quant_mode, )
         self.quant_mode = tuple(QuantMode.get(m) for m in quant_mode)
+        self.calibrate_steps = calibrate_steps
+        self.calibrate_cfg = calibrate_cfg
+
+    def _do_calibration(self, runner):
+        device = torch.device(f"cuda:{torch.cuda.current_device()}")
+        runner.model.do_calibration(runner, self.calibrate_steps, self.calibrate_cfg, device, runner.runtime_hook)
 
     def before_run(self, runner):
         runner.model.quant_mode = self.quant_mode
@@ -92,7 +98,9 @@ class SetupQuantOnce(Hook):
             runner.model.module.find_unused_parameters = QuantMode.QWQA not in self.quant_mode
 
     def before_train_epoch(self, runner):
-        runner.model._in_qat = any(mode != QuantMode.FWFA for mode in self.quant_mode)
+        runner.model._in_qat = any(QuantMode.FWFA not in mode for mode in self.quant_mode)
+        if runner.epoch == 0 and runner.model._in_qat:
+            self._do_calibration(runner)
 
 
 class IntervalWarmupedVariable(Hook):
@@ -145,10 +153,16 @@ class ConstantVariable(Hook):
 
 class OptimAlterStep(Hook):
 
-    def __init__(self, apply_to, alter_freq, intervals):
+    def __init__(self, apply_to, alter_freq, intervals, loss_seq=None):
         self.apply_to = apply_to
         self.alter_freq = alter_freq
         self.intervals = intervals
+        self.loss_seq = loss_seq
+
+    @staticmethod
+    def check_and_backward(loss):
+        if torch.is_tensor(loss):
+            loss.backward()
 
     def after_train_iter(self, runner):
         if _in_intervals(runner.epoch, self.intervals):
@@ -162,8 +176,12 @@ class OptimAlterStep(Hook):
 
         for optim in optims:
             optim.zero_grad()
-        loss = runner.outputs["loss"]
-        loss.backward()
+        if self.loss_seq is not None:
+            for loss_name in self.loss_seq:
+                self.check_and_backward(runner.outputs[loss_name])
+        else:
+            loss = sum(v for k, v in runner.outputs.items() if k.endswith("_loss"))
+            loss.backward()
         for optim in optims:
             optim.step()
 

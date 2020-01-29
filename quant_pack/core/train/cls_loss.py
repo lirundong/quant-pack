@@ -51,7 +51,10 @@ class CEKLLoss(Hook):
         assert hasattr(runner, "named_vars")
         ce_loss, ce_weight = self._ce_loss(runner)
         kl_loss, kl_weight = self._kl_loss(runner)
-        loss = ce_loss * ce_weight + kl_loss * kl_weight
+        loss = OrderedDict(
+            ce_loss=ce_loss * ce_weight,
+            kl_loss=kl_loss * kl_weight,
+        )
         log_vars = OrderedDict(
             ce_loss=get_scalar(ce_loss),
             kl_loss=get_scalar(kl_loss),
@@ -62,7 +65,7 @@ class CEKLLoss(Hook):
 
     def after_iter(self, runner):
         loss, log_vars = self._get_loss(runner)
-        runner.outputs["loss"] = loss
+        runner.outputs.update(loss)
         runner.log_buffer.update(log_vars)
 
 
@@ -92,9 +95,9 @@ class CEKLCosineLoss(CEKLLoss):
         return cosine_loss, cosine_weight
 
     def _get_loss(self, runner):
-        cekl_loss, log_vars = super(CEKLCosineLoss, self)._get_loss(runner)
+        loss, log_vars = super(CEKLCosineLoss, self)._get_loss(runner)
         cos_loss, cos_weight = self._cosine_loss(runner)
-        loss = cekl_loss + cos_loss * cos_weight
+        loss.update(cosine_loss=cos_loss * cos_weight)
         log_vars.update(
             cosine_loss=get_scalar(cos_loss),
             cosine_weight=get_scalar(cos_weight),

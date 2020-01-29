@@ -6,7 +6,7 @@ class HookBuilder:
     def __init__(self, phases, hook_reg, enable_reg):
         if isinstance(phases, str):
             phases = (phases, )
-        assert all(phase in ("forward", "forward_pre", "backward") for phase in phases)
+        assert all(phase in ("forward", "forward_pre", "backward", "tensor") for phase in phases)
         self._phases = phases
         self._reg = hook_reg
         self._enable_reg = enable_reg
@@ -18,6 +18,9 @@ class HookBuilder:
         raise NotImplementedError()
 
     def _runtime_backward_hook(self, module, grad_input, grad_output):
+        raise NotImplementedError()
+
+    def _runtime_tensor_hook(self, tensor_grad):
         raise NotImplementedError()
 
     @property
@@ -39,6 +42,10 @@ class HookBuilder:
         if self.enabled:
             return self._runtime_backward_hook(module, grad_input, grad_output)
 
+    def tensor_hook(self, tensor_grad):
+        if self.enabled:
+            return self._runtime_tensor_hook(tensor_grad)
+
     def match(self, *args, **kwargs):
         raise NotImplementedError()
 
@@ -54,4 +61,6 @@ class HookBuilder:
                 ret.append(("register_forward_pre_hook", self.forward_pre_hook))
             elif phase == "backward":
                 ret.append(("register_backward_hook", self.backward_hook))
+            elif phase == "tensor":
+                ret.append(("register_hook", self.backward_hook))
         return ret

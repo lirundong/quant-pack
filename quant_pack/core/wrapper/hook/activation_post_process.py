@@ -12,6 +12,8 @@ from tqdm import tqdm
 
 class CosineDistancePostProcess:
 
+    plot_method = "layerwise_cosine"
+
     def __init__(self, apply_to):
         assert len(apply_to) == 2, "currently we only support pair-wise comparison"
         self.apply_to = apply_to
@@ -241,6 +243,8 @@ def pairwise(iterable):
 
 
 class RelativeErrorPostProcess:
+
+    plot_method = "error_scatter_hist"
 
     def __init__(self, apply_to, ce_loss_from,
                  abnormal_x_range=None, abnormal_y_range=None,

@@ -222,7 +222,7 @@ class ParametrizedQuantWrapper(nn.Module):
         if quant_mode is None:
             quant_mode = model.quant_mode
         img, label = data_batch
-        outputs = {"label": label.to(device, non_blocking=True)}
+        outputs = OrderedDict(label=label.to(device, non_blocking=True))
         for i, mode in enumerate(quant_mode):
             if isinstance(mode, str):
                 mode = QuantMode.get(mode)
@@ -250,8 +250,8 @@ class ParametrizedQuantWrapper(nn.Module):
             m.w_ub.copy_(m.weight.max())
         self.quant_w()
         self.fp_a()
-        calib_hook_name = runtime_hook.add_builder(calibration_cfg, enabled=True)
-        runtime_hooks = runtime_hook.update_hooks(QuantMode.QWFA | QuantMode.Calib)
+        calib_hook_name = runtime_hook.add_builder(calibration_cfg, enabled=True, model=self)
+        runtime_hooks = runtime_hook.update_hooks(QuantMode.QWFA | QuantMode.Calib, force=True)
         for i, data_batch in enumerate(runner.data_loader):
             if i >= calibration_step:
                 break
@@ -262,4 +262,4 @@ class ParametrizedQuantWrapper(nn.Module):
             if not isinstance(m, nn.BatchNorm2d):
                 m._running_mean_q = m._running_mean_fp.clone()
                 m._running_var_q = m._running_var_fp.clone()
-        runner.logger.info(f"calibration done")
+        runner.logger.info(f"calibration done with {i} steps")

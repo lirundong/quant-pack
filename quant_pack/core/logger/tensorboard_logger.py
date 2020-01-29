@@ -123,50 +123,64 @@ class EnhancedTBLoggerHook(TensorboardLoggerHook):
         super(EnhancedTBLoggerHook, self).__init__(log_dir, interval, ignore_last, reset_flag)
         self.exit_after_one_plot = exit_after_one_plot
 
+    def plot_error_scatter_hist(self, plot_data, runner):
+        per_instance_loss = plot_data.pop("per_instance_ce_loss")
+        for layer_name, err_dict in plot_data.items():
+            input_err_mean = err_dict["input_error_mean"]
+            output_err = err_dict["output_error"]
+            tag = f"input_output_error/{layer_name}"
+            fig_scatter = plot_xy_scatter(input_err_mean, output_err, per_instance_loss,
+                                          xrange=(-10., 10.), yrange=(-10., 10.),  # TODO: remove this ad-hoc
+                                          xlabel="input_error_mean", ylabel="output_error",
+                                          title=layer_name)
+            self.writer.add_figure(tag, fig_scatter, runner.iter)
+            input_err = err_dict["input_error"]
+            tag = f"input_error_hist/{layer_name}"
+            fig_hist = plot_hist_with_log_scale(input_err, title=layer_name)
+            self.writer.add_figure(tag, fig_hist, runner.iter)
+
+            reports = [k for k in err_dict.keys() if k.endswith("_report")]
+            for report in reports:
+                text = err_dict[report]
+                tag = f"{report}/{layer_name}"
+                self.writer.add_text(tag, text, runner.iter)
+
+            if "weight" in err_dict:
+                label = f"weight/{layer_name}"
+                plot_3d_hist_of_filters(self.writer, err_dict["weight"], label)
+            if "weight_error" in err_dict:
+                label = f"weight_error/{layer_name}"
+                plot_3d_hist_of_filters(self.writer, err_dict["weight_error"], label)
+
+    def plot_layerwise_cos_dist(self, plot_data, plot_name, runner):
+        x, y = pair_to_seq(*plot_data)
+        if mmcv.is_list_of(x, str):
+            fig = plot_y_with_label(y, labels=x, title=plot_name)
+        else:
+            fig = plot_xy(x, y, title=plot_name)
+        tag = f"{plot_name}/{runner.mode}"
+        self.writer.add_figure(tag, fig, runner.iter)
+
+    def plot_multi_loss_cos_dist(self, plot_data, runner):
+        for dist_name, dist in plot_data.items():
+            self.writer.add_scalar(dist_name, dist, runner.iter)
+
     @master_only
     def log(self, runner):
-        if "plot" in runner.log_buffer.output:
+        if "plot_buffer" in runner.log_buffer.output:
             runner.logger.info(f"plotting diagnosis at epoch {runner.epoch}, step {runner.inner_iter}")
-            plot_buf = runner.log_buffer.output.pop("plot")
+            plot_buf = runner.log_buffer.output.pop("plot_buffer")
+            plot_method = runner.log_buffer.output.pop("plot_method")
             for plot_name, plot_data in plot_buf.items():
-                # TODO: add `plot_func` parameter in input buffers
-                if isinstance(plot_data, dict):  # layer-wise error analysis
-                    per_instance_loss = plot_data.pop("per_instance_ce_loss")
-                    for layer_name, err_dict in plot_data.items():
-                        input_err_mean = err_dict["input_error_mean"]
-                        output_err = err_dict["output_error"]
-                        tag = f"input_output_error/{layer_name}"
-                        fig_scatter = plot_xy_scatter(input_err_mean, output_err, per_instance_loss,
-                                                      xrange=(-10., 10.), yrange=(-10., 10.),  # TODO: remove this ad-hoc
-                                                      xlabel="input_error_mean", ylabel="output_error",
-                                                      title=layer_name)
-                        self.writer.add_figure(tag, fig_scatter, runner.iter)
-                        input_err = err_dict["input_error"]
-                        tag = f"input_error_hist/{layer_name}"
-                        fig_hist = plot_hist_with_log_scale(input_err, title=layer_name)
-                        self.writer.add_figure(tag, fig_hist, runner.iter)
-
-                        reports = [k for k in err_dict.keys() if k.endswith("_report")]
-                        for report in reports:
-                            text = err_dict[report]
-                            tag = f"{report}/{layer_name}"
-                            self.writer.add_text(tag, text, runner.iter)
-
-                        if "weight" in err_dict:
-                            label = f"weight/{layer_name}"
-                            plot_3d_hist_of_filters(self.writer, err_dict["weight"], label)
-                        if "weight_error" in err_dict:
-                            label = f"weight_error/{layer_name}"
-                            plot_3d_hist_of_filters(self.writer, err_dict["weight_error"], label)
-
-                else:  # layer-wise cosine distance
-                    x, y = pair_to_seq(*plot_data)
-                    if mmcv.is_list_of(x, str):
-                        fig = plot_y_with_label(y, labels=x, title=plot_name)
-                    else:
-                        fig = plot_xy(x, y, title=plot_name)
-                    tag = f"{plot_name}/{runner.mode}"
-                    self.writer.add_figure(tag, fig, runner.iter)
+                method = plot_method[plot_name]
+                if method == "error_scatter_hist":
+                    self.plot_error_scatter_hist(plot_data, runner)
+                elif method == "layerwise_cosine":
+                    self.plot_layerwise_cos_dist(plot_data, plot_name, runner)
+                elif method == "multi_loss_cosine":
+                    self.plot_multi_loss_cos_dist(plot_data, runner)
+                else:
+                    raise RuntimeError(f"Invalid plot method {method}")
             plot_buf.clear()
 
         super(EnhancedTBLoggerHook, self).log(runner)
@@ -179,5 +193,3 @@ class EnhancedTBLoggerHook(TensorboardLoggerHook):
         if self.every_n_inner_iters(runner, self.interval):
             runner.log_buffer.average()
             self.log(runner)
-            if self.reset_flag:
-                runner.log_buffer.clear_output()
