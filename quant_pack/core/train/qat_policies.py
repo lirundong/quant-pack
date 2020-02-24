@@ -81,12 +81,12 @@ class EnableQuantAtIntervals(Hook):
 
 class SetupQuantOnce(Hook):
 
-    def __init__(self, quant_mode, calibrate_steps=1, calibrate_cfg={}):
+    def __init__(self, quant_mode, calibrate_steps=1, calibrate_cfg=None):
         if isinstance(quant_mode, str):
             quant_mode = (quant_mode, )
         self.quant_mode = tuple(QuantMode.get(m) for m in quant_mode)
         self.calibrate_steps = calibrate_steps
-        self.calibrate_cfg = calibrate_cfg
+        self.calibrate_cfg = {} if calibrate_cfg is None else calibrate_cfg
 
     def _do_calibration(self, runner):
         device = torch.device(f"cuda:{torch.cuda.current_device()}")
@@ -160,9 +160,9 @@ class OptimAlterStep(Hook):
         self.loss_seq = loss_seq
 
     @staticmethod
-    def check_and_backward(loss):
+    def check_and_backward(loss, retain_graph):
         if torch.is_tensor(loss):
-            loss.backward()
+            loss.backward(retain_graph=retain_graph)
 
     def after_train_iter(self, runner):
         if _in_intervals(runner.epoch, self.intervals):
@@ -178,7 +178,8 @@ class OptimAlterStep(Hook):
             optim.zero_grad()
         if self.loss_seq is not None:
             for loss_name in self.loss_seq:
-                self.check_and_backward(runner.outputs[loss_name])
+                retain_graph = loss_name is not self.loss_seq[-1]
+                self.check_and_backward(runner.outputs[loss_name], retain_graph)
         else:
             loss = sum(v for k, v in runner.outputs.items() if k.endswith("_loss"))
             loss.backward()

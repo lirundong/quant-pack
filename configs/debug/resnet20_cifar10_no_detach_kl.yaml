@@ -1,0 +1,15 @@
+__BASE__: configs/GQ_Nets/resnet20_cifar10_vanilla.yaml
+
+train:
+  loss:
+    name: CEKL
+    args:
+      detach_kl_ref: false
+
+dataset:
+  name: CIFAR10
+  args:
+    root: /mnt/lustre/lirundong/Data/Datasets/CIFAR
+
+work_dir: /mnt/lustre/lirundong/Data/Experiments/GQ-Nets/debug/resnet21-cifar10-no-detach-kl
+resume: null

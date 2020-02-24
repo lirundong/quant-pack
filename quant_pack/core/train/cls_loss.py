@@ -10,8 +10,9 @@ from mmcv.runner import Hook
 from .utils import get_scalar
 
 
-def _kl_distillation_loss(logits, references, temperature):
-    references = references.detach()
+def _kl_distillation_loss(logits, references, temperature, detach):
+    if detach:
+        references = references.detach()
     return F.kl_div(F.log_softmax(logits / temperature, dim=1),
                     F.softmax(references / temperature, dim=1),
                     reduction="batchmean") * pow(temperature, 2)
@@ -24,12 +25,14 @@ class CEKLLoss(Hook):
                  kl_inputs: Tuple[str, str] = ("quant", "fp"),
                  ce_loss_weight_name: str = "ce_loss_weight",
                  kl_loss_weight_name: str = "kl_loss_weight",
-                 kl_temperature_name: str = "kl_temperature"):
+                 kl_temperature_name: str = "kl_temperature",
+                 detach_kl_ref: bool = True):
         self.ce_inputs = ce_inputs
         self.kl_inputs = kl_inputs
         self.ce_loss_weight_name = ce_loss_weight_name
         self.kl_loss_weight_name = kl_loss_weight_name
         self.kl_temperature_name = kl_temperature_name
+        self.detach_kl_ref = detach_kl_ref
 
     def _ce_loss(self, runner):
         ce_inputs = [runner.outputs[n] for n in self.ce_inputs]
@@ -42,7 +45,7 @@ class CEKLLoss(Hook):
             kl_inputs = [runner.outputs[n] for n in self.kl_inputs]
             kl_weight = runner.named_vars[self.kl_loss_weight_name]
             kl_temperature = runner.named_vars[self.kl_temperature_name]
-            kl_loss = _kl_distillation_loss(*kl_inputs, kl_temperature)
+            kl_loss = _kl_distillation_loss(*kl_inputs, kl_temperature, self.detach_kl_ref)
         else:
             kl_loss = kl_weight = 0.
         return kl_loss, kl_weight

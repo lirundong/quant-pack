@@ -118,7 +118,7 @@ class EnhancedTBLoggerHook(TensorboardLoggerHook):
                  log_dir=None,
                  interval=10,
                  ignore_last=True,
-                 reset_flag=True,
+                 reset_flag=False,
                  exit_after_one_plot=False,):
         super(EnhancedTBLoggerHook, self).__init__(log_dir, interval, ignore_last, reset_flag)
         self.exit_after_one_plot = exit_after_one_plot

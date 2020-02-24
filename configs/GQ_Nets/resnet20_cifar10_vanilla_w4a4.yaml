@@ -1,0 +1,10 @@
+__BASE__: configs/GQ_Nets/resnet20_cifar10_vanilla.yaml
+
+wrapper:
+  name: ParametrizedQuantWrapper
+  args:
+    quant_conf:
+      bit_width: 4
+
+work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-vanilla-w4a4
+resume: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-vanilla-w4a4/epoch_173.pth

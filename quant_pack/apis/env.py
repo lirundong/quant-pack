@@ -5,6 +5,7 @@ import re
 import socket
 from datetime import timedelta
 from pathlib import Path
+from pprint import pprint
 
 import netifaces
 import colorama
@@ -15,6 +16,7 @@ import torch.multiprocessing as mp
 import numpy as np
 from easydict import EasyDict
 from deepmerge import Merger
+from mmcv.runner import master_only
 
 
 def _get_master_ip_slurm():
@@ -130,12 +132,17 @@ def build_cfg(args):
 
 
 def init_environment(cfg):
+    @master_only
+    def _pprint_cfg():
+        pprint(dict(cfg))
+
     if mp.get_start_method(allow_none=True) != "forkserver":
         mp.set_start_method("forkserver")
     colorama.init()
     _init_dist_and_device(cfg)
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
+    _pprint_cfg()
 
 
 def finish_environment(cfg):

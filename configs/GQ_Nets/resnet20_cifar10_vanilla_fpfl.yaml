@@ -8,7 +8,9 @@ wrapper:
       bit_width: 2
       align_zero: false
     do_fold_bn: false
-    fp_layers: null # list with item like: ((module|model).)*conv1
+    fp_layers:
+      - ((module|model).)*conv1
+      - ((module|model).)*fc
 
 train:
   optim_groups:
@@ -104,5 +106,4 @@ log:
     - type: EnhancedTBLoggerHook
     - type: TextLoggerHook
 
-work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-vanilla
-resume: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-vanilla/epoch_168.pth
+work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-vanilla-fpfl

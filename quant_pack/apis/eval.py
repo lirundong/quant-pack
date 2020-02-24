@@ -61,7 +61,7 @@ def _local_eval(cfg):
         evaluator.resume(cfg.resume, resume_optimizer=False)
 
     evaluator.call_hook("before_run")
-    evaluator.val(eval_loader, device=cfg.device, quant_mode=cfg.eval.quant_mode, runtime_hook_updater=runtime_hook_updater)
+    evaluator.val(eval_loader, device=cfg.device, quant_mode=cfg.eval.quant_mode, runtime_hook=runtime_hook_updater)
 
 
 def eval_classifier(cfg):
