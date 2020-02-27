@@ -38,7 +38,7 @@ class ParametrizedQuantWrapper(nn.Module):
             module (nn.Module): the underlying task-agnostic model;
             quant_conf (dict): whose content will pass to `QuantConfig`
                 - mode:
-                - bit_width:
+                - bit_width: int (for W/A both) or tuple (for kW/kA)
                 - align_zero:
             bn_folding_mapping (list[tuple]): mapping from `BN layer name` ->
                 `Conv/FC layer name`;
@@ -53,12 +53,18 @@ class ParametrizedQuantWrapper(nn.Module):
             f"`module`. Pass in the raw module then call `to_ddp()` instead."
 
         self.module = module
-        self.quant_conf = quant_conf
         self.quant_mode = None  # setup by qat_hooks later
         self._in_qat = False  # add this flag so `HijackModuleOutput` knows whether itself be enabled
         self._module_forward = module.__class__.forward
         self._quant_submodules = set()
         self._fused_submodules = set()
+        if isinstance(quant_conf["bit_width"], (tuple, list)):
+            self.w_quant_conf = copy.copy(quant_conf)
+            self.w_quant_conf["bit_width"] = quant_conf["bit_width"][0]
+            self.a_quant_conf = copy.copy(quant_conf)
+            self.a_quant_conf["bit_width"] = quant_conf["bit_width"][1]
+        else:
+            self.w_quant_conf = self.a_quant_conf = quant_conf
 
         self._do_bn_folding(bn_folding_mapping, do_fold_bn)
         self._register_quant_params(fp_layers)
@@ -128,8 +134,8 @@ class ParametrizedQuantWrapper(nn.Module):
                     ("a_lb", nn.Parameter(torch.tensor(0.))),
                     ("a_ub", nn.Parameter(torch.tensor(1.))),
                 )
-                m.weight_qconf = QuantConfig(lb=m.w_lb, ub=m.w_ub, **self.quant_conf)
-                m.input_qconf = QuantConfig(lb=m.a_lb, ub=m.a_ub, **self.quant_conf)
+                m.weight_qconf = QuantConfig(lb=m.w_lb, ub=m.w_ub, **self.w_quant_conf)
+                m.input_qconf = QuantConfig(lb=m.a_lb, ub=m.a_ub, **self.a_quant_conf)
                 self._quant_submodules.add(m)
 
                 if m not in self._fused_submodules:

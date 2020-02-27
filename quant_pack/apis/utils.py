@@ -25,6 +25,14 @@ def load_pre_trained(model, ckpt_path):
     model.load_state_dict(ckpt, strict=True)
 
 
+def fresh_resume(model, ckpt_path):
+    device = torch.device("cpu")
+    ckpt = torch.load(open(ckpt_path, "rb"), device)
+    if "state_dict" in ckpt.keys():
+        ckpt = ckpt["state_dict"]
+    model.load_state_dict(ckpt, strict=False)
+
+
 def item_to_tuple(*args):
     ret = []
     for arg in args:

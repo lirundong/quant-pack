@@ -8,7 +8,7 @@ import quant_pack.core.runner as runner
 from quant_pack.datasets import build_dataset
 from quant_pack.models import build_model
 
-from .utils import load_pre_trained, item_to_tuple
+from .utils import load_pre_trained, fresh_resume, item_to_tuple
 
 
 def _dist_train(cfg):
@@ -26,10 +26,8 @@ def _dist_train(cfg):
     optims = model.get_optimizers(*cfg.train.optim_groups)
     trainer = runner.MultiOptimRunner(model, model.batch_processor, optims, cfg.work_dir)
     trainer.register_qat_hooks(cfg.train.loss, cfg.train.metrics, cfg.train.lr_policies,
-                               cfg.train.qat_policies, cfg.train.ckpt_interval)
+                               cfg.train.qat_policies, cfg.train.ckpt_interval, cfg.runtime_hooks)
 
-    if cfg.runtime_hooks:
-        trainer.inject_runtime_hooks(**cfg.runtime_hooks)
     if cfg.eval:
         trainer.register_eval_hooks(cfg.eval.metrics)
     if cfg.log:
@@ -38,7 +36,8 @@ def _dist_train(cfg):
         trainer.resume(cfg.resume)
 
     trainer.model.to_ddp()
-    trainer.run([train_loader, eval_loader], item_to_tuple(*cfg.work_flow), cfg.epochs, device=cfg.device)
+    trainer.run([train_loader, eval_loader], item_to_tuple(*cfg.work_flow), cfg.epochs,
+                device=cfg.device, runtime_hook=trainer.runtime_hook)
 
 
 def _local_train(cfg):
@@ -51,6 +50,8 @@ def _local_train(cfg):
         load_pre_trained(model, cfg.pre_trained)
     bn_folding_mapping = wrapper.track_bn_folding_mapping(model, torch.randn(*cfg.model.input_size))
     model = wrapper.__dict__[cfg.wrapper.name](model, bn_folding_mapping=bn_folding_mapping, **cfg.wrapper.args)
+    if cfg.fresh_resume:
+        fresh_resume(model.module, cfg.fresh_resume)
     model.module.to(cfg.device)
 
     optims = model.get_optimizers(*cfg.train.optim_groups)

@@ -1,0 +1,10 @@
+__BASE__: configs/GQ_Nets/resnet18_vanilla.yaml
+
+wrapper:
+  name: ParametrizedQuantWrapper
+  args:
+    quant_conf:
+      bit_width: 5
+
+work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-vanilla-w5a5/
+resume: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-vanilla-w5a5/latest.pth

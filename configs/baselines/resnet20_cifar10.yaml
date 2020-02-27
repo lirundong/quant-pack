@@ -103,3 +103,4 @@ dataset:
 work_dir: /home/lirundong/HDD1/Experiments/resnet20-cifar10
 pre_trained: null
 resume: null
+fresh_resume: null

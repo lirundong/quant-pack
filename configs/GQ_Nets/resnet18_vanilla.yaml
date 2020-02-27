@@ -44,6 +44,11 @@ train:
           - [25, 60]
           - [65, 90]
           - [95, -1]
+        calibrate_cfg:
+          name: calibration
+          type: ActivationCalibration
+          args:
+            percentile: 0.99
     - name: ConstantVariable
       args:
         name: ce_loss_weight
@@ -64,10 +69,5 @@ train:
         alter_freq: -1  # tune W and Theta in parallel
         intervals: *q_intervals
 
-log:
-  interval: 200
-  hooks:
-    - type: TextLoggerHook
-    - type: TensorboardLoggerHook
-
 work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-vanilla/
+resume: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-vanilla/latest.pth

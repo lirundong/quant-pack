@@ -20,7 +20,7 @@ IntervalT = List[Tuple[int, int]]
 def _in_intervals(i: int, intervals: IntervalT) -> Optional[Tuple[int, int]]:
     ret = None
     for (a, b) in intervals:
-        if (b != -1 and a <= i < b) or a <= i:
+        if (b != -1 and a <= i < b) or (b == -1 and a <= i):
             ret = (a, b)
     return ret
 
