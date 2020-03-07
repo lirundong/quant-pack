@@ -10,6 +10,7 @@ __all__ = ["FUSED_FORWARD_FUNCTIONS", "QUANT_FORWARD_FUNCTIONS"]
 FUSED_FORWARD_FUNCTIONS = {
     nn.Conv2d: fused_f.fused_conv_bn_forward,
     nn.BatchNorm2d: fused_f.fused_bn_forward,
+    nn.SyncBatchNorm: fused_f.fused_bn_forward,
     nn.Linear: fused_f.fused_conv_bn_forward,
 }
 

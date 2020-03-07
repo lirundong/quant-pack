@@ -1,0 +1,29 @@
+__BASE__: configs/GQ_Nets/resnet18_vanilla.yaml
+
+model:
+  name: mobilenet_v2
+
+train:
+  data_loader:
+    args:
+      batch_size: 64
+  optim_groups:
+    - name: quant_params
+      matches:
+        - .*(_lb|_ub)$
+      optim_type: Adam
+      args:
+        lr: !!float 1e-3
+        weight_decay: 0.0
+    - name: weight_params
+      matches:
+        - .*
+      optim_type: SGD
+      args:
+        lr: 0.025
+        momentum: 0.9
+        weight_decay: !!float 1e-4
+        nesterov: true
+
+work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/mobilenetv2-vanilla/
+resume: null

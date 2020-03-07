@@ -1,0 +1,16 @@
+__BASE__: configs/GQ_Nets/resnet20_cifar10_vanilla_fpfl.yaml
+
+epochs: 400
+train:
+  lr_policies:
+    - name: StepMultiOptim
+      args:
+        step: [160, 240, 320]
+        gamma: 0.1
+        warmup: null
+        scale_by_world_size: false
+        by_epoch: true
+        apply_to:
+          - weight_params
+work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-vanilla-fpfl-2x
+resume: null

@@ -7,3 +7,4 @@ wrapper:
       bit_width: 2
 
 work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res18-vanilla-w2a2/
+resume: null

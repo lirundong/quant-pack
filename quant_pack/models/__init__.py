@@ -4,10 +4,12 @@ import torchvision.models as models
 
 from . import resnet_cifar
 from . import init_utils
+from . import mobilenet_v1
 
 _model_reg = {}
 _model_reg.update(models.__dict__)
 _model_reg.update(resnet_cifar.__dict__)
+_model_reg.update(mobilenet_v1.__dict__)
 
 __all__ = ["build_model"]
 

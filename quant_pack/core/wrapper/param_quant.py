@@ -31,7 +31,7 @@ class ParametrizedQuantWrapper(nn.Module):
 
     _quantable_types = tuple(QUANT_FORWARD_FUNCTIONS.keys())
 
-    def __init__(self, module, quant_conf, bn_folding_mapping, do_fold_bn, fp_layers=None):
+    def __init__(self, module, quant_conf, bn_folding_mapping, do_fold_bn, fp_layers=None, sync_bn=False):
         """Model wrapper for parameterized-quantized training/evaluation.
 
         Args:
@@ -43,7 +43,8 @@ class ParametrizedQuantWrapper(nn.Module):
             bn_folding_mapping (list[tuple]): mapping from `BN layer name` ->
                 `Conv/FC layer name`;
             do_fold_bn (bool): whether actually do BN folding training/inference
-            fp_layers (list[str], optional)
+            fp_layers (list[str], optional):
+            sync_bn (bool): whether sync BN statistics when forwarding
         """
         super(ParametrizedQuantWrapper, self).__init__()
 
@@ -51,6 +52,9 @@ class ParametrizedQuantWrapper(nn.Module):
             f"`module` should not wrapped with DDP, since the initialization of" \
             f"{self.__class__.__name__} will register additional parameters to" \
             f"`module`. Pass in the raw module then call `to_ddp()` instead."
+
+        if sync_bn:
+            module = nn.SyncBatchNorm.convert_sync_batchnorm(module)
 
         self.module = module
         self.quant_mode = None  # setup by qat_hooks later
@@ -91,7 +95,7 @@ class ParametrizedQuantWrapper(nn.Module):
         for (bn_name, conv_name) in bn_folding_mapping:
             bn_layer = _get_submodule(self.module, bn_name)
             conv_layer = _get_submodule(self.module, conv_name)
-            assert isinstance(bn_layer, nn.BatchNorm2d) and isinstance(conv_layer, nn.Conv2d)
+            assert isinstance(bn_layer, (nn.BatchNorm2d, nn.SyncBatchNorm)) and isinstance(conv_layer, nn.Conv2d)
             assert bn_layer._version >= 2, "deprecated BN implementation, please update to PyTorch>=1.1"
 
             conv_layer.register_parameter("alpha", bn_layer.weight)
@@ -116,6 +120,7 @@ class ParametrizedQuantWrapper(nn.Module):
             # place holders, filled by pre_iter_hooks from m.*qconf later
             conv_layer.weight_transform = conv_layer.input_transform = None
             conv_layer.fold_bn = do_fold_bn
+            conv_layer.sync_bn = isinstance(bn_layer, nn.SyncBatchNorm)
             conv_layer.forward = MethodType(FUSED_FORWARD_FUNCTIONS[conv_layer.__class__], conv_layer)
             bn_layer.forward = MethodType(FUSED_FORWARD_FUNCTIONS[bn_layer.__class__], bn_layer)
 
@@ -265,7 +270,7 @@ class ParametrizedQuantWrapper(nn.Module):
             _ = self(img.to(device, non_blocking=True), runtime_hooks=runtime_hooks)
         runtime_hook.remove_builder(calib_hook_name)
         for m in self._fused_submodules:
-            if not isinstance(m, nn.BatchNorm2d):
+            if not isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
                 m._running_mean_q = m._running_mean_fp.clone()
                 m._running_var_q = m._running_var_fp.clone()
         runner.logger.info(f"calibration done with {i} steps")

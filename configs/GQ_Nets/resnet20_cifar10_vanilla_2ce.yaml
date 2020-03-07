@@ -1,0 +1,11 @@
+__BASE__: configs/GQ_Nets/resnet20_cifar10_vanilla.yaml
+
+train:
+  loss:
+    name: CEKL
+    args:
+      ce_inputs:
+        - ["fp", "quant"]
+        - "label"
+work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-vanilla-2ce
+resume: null

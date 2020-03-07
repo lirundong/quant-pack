@@ -1,0 +1,10 @@
+__BASE__: configs/GQ_Nets/resnet34_vanilla.yaml
+
+wrapper:
+  name: ParametrizedQuantWrapper
+  args:
+    quant_conf:
+      bit_width: 3
+
+work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/res34-vanilla-w3a3/
+resume: /mnt/lustre/lirundong/Workspace/GQ-Nets/res34-vanilla/epoch_25.pth

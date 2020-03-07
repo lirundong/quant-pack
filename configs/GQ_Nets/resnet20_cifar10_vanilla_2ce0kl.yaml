@@ -1,0 +1,45 @@
+__BASE__: configs/GQ_Nets/resnet20_cifar10_vanilla.yaml
+
+train:
+  loss:
+    name: CEKL
+    args:
+      ce_inputs:
+        - ["fp", "quant"]
+        - "label"
+  qat_policies:
+    - name: SetupQuantOnce
+      args:
+        quant_mode:
+          - quant
+          - fp
+        calibrate_cfg:
+          name: calibration
+          type: ActivationCalibration
+          args:
+            percentile: 0.99
+    - name: ConstantVariable
+      args:
+        name: ce_loss_weight
+        value: 1.0
+    - name: ConstantVariable
+      args:
+        name: kl_loss_weight
+        value: 0.0  # no KL-side gradient
+    - name: ConstantVariable
+      args:
+        name: kl_temperature
+        value: 1.0
+    - name: OptimAlterStep
+      args:
+        apply_to:
+          - weight_params
+          - quant_params
+        alter_freq: -1  # tune W and Theta in parallel
+        intervals:
+          - [0, -1]
+        loss_seq:
+          - ce_loss
+          - kl_loss
+work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-vanilla-2ce0kl
+resume: null

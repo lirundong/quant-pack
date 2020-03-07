@@ -4,6 +4,8 @@ from distutils.version import LooseVersion
 
 import torch
 import torch.nn.functional as F
+import torch.distributed as dist
+from torch.nn.modules._functions import SyncBatchNorm as sync_batch_norm
 
 __all__ = ["fused_conv_bn_forward", "fused_bn_forward", "fused_fc_bn_forward"]
 
@@ -44,9 +46,16 @@ def fused_conv_bn_forward(module, input):
             weight, bias, alpha, beta = detach_vars(weight, bias, alpha, beta)
         pre_activation = F.conv2d(input, weight, bias, module.stride,
                                   module.padding, module.dilation, module.groups)
-        normed_activation = F.batch_norm(pre_activation, module.running_mean, module.running_var,
-                                         alpha, beta, module.training,
-                                         module.bn_momentum, module.bn_eps)
+        if module.sync_bn:
+            process_group = dist.group.WORLD
+            world_size = dist.get_world_size(process_group)
+            normed_activation = sync_batch_norm.apply(
+                pre_activation, alpha, beta, module.running_mean, module.running_var,
+                module.bn_eps, module.bn_momentum, process_group, world_size)
+        else:
+            normed_activation = F.batch_norm(pre_activation, module.running_mean, module.running_var,
+                                             alpha, beta, module.training,
+                                             module.bn_momentum, module.bn_eps)
         if getattr(module, "gather_data", None):
             for name in module.gather_data:
                 if name in locals():

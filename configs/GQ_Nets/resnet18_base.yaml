@@ -78,6 +78,11 @@ train:
           - [25, 60]
           - [65, 90]
           - [95, -1]
+        calibrate_cfg:
+          name: calibration
+          type: ActivationCalibration
+          args:
+            percentile: 0.99
     - name: ConstantVariable
       args:
         name: ce_loss_weight

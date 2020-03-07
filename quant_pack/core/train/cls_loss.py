@@ -28,6 +28,11 @@ class CEKLLoss(Hook):
                  kl_temperature_name: str = "kl_temperature",
                  detach_kl_ref: bool = True):
         self.ce_inputs = ce_inputs
+        if isinstance(ce_inputs[0], (list, tuple)):
+            self.ce_logits = ce_inputs[0]
+        else:
+            self.ce_logits = [ce_inputs[0], ]
+        self.ce_label = ce_inputs[1]
         self.kl_inputs = kl_inputs
         self.ce_loss_weight_name = ce_loss_weight_name
         self.kl_loss_weight_name = kl_loss_weight_name
@@ -35,9 +40,10 @@ class CEKLLoss(Hook):
         self.detach_kl_ref = detach_kl_ref
 
     def _ce_loss(self, runner):
-        ce_inputs = [runner.outputs[n] for n in self.ce_inputs]
+        ce_label = runner.outputs[self.ce_label]
+        ce_logits = [runner.outputs[n] for n in self.ce_logits]
+        ce_loss = sum(F.cross_entropy(ce_logit, ce_label) for ce_logit in ce_logits)
         ce_weight = runner.named_vars[self.ce_loss_weight_name]
-        ce_loss = F.cross_entropy(*ce_inputs)
         return ce_loss, ce_weight
 
     def _kl_loss(self, runner):

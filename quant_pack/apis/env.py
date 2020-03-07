@@ -72,7 +72,7 @@ def _init_dist_and_device(cfg):
 
         master_ip = _get_master_ip_slurm()
         backend = dist.Backend.NCCL
-        # os.environ["NCCL_SOCKET_IFNAME"] = _get_ib_interface()
+        os.environ["NCCL_SOCKET_IFNAME"] = _get_ib_interface()
         os.environ["MASTER_PORT"] = str(cfg.port)
         os.environ["MASTER_ADDR"] = str(master_ip)
         os.environ["WORLD_SIZE"] = str(n_tasks)

@@ -1,0 +1,7 @@
+__BASE__: configs/GQ_Nets/resnet18_base.yaml
+
+model:
+  name: mobilenet_v2
+
+work_dir: /mnt/lustre/lirundong/Workspace/GQ-Nets/mobilenetv2-base/
+resume: /mnt/lustre/lirundong/Workspace/GQ-Nets/mobilenetv2-base/latest.pth

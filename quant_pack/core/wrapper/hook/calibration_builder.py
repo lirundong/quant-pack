@@ -31,6 +31,6 @@ class ActivationCalibrationBuilder(HookBuilder):
             ub, lb = bounds
         else:
             ub, lb = input[k], input[n - k]
-        assert lb < ub
+        assert lb < ub, f"invalid calibration bounds: lb={lb.item():.5f}, ub={ub.item():.5f}"
         module.a_lb.copy_(lb)
         module.a_ub.copy_(ub)
