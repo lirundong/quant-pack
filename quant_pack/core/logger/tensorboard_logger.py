@@ -165,6 +165,24 @@ class EnhancedTBLoggerHook(TensorboardLoggerHook):
         for dist_name, dist in plot_data.items():
             self.writer.add_scalar(dist_name, dist, runner.iter)
 
+    def naive_plot_param(self, param_dict, runner):
+        """
+
+        Args:
+            param_dict (dict): {"layer_name": {"param_name": param_tensor}}
+            runner:
+
+        Returns:
+
+        """
+        for layer_name, layer_dict in param_dict.items():
+            for param_name, param in layer_dict.items():
+                tag = f"{param_name}/{layer_name}"
+                if param.numel() == 1:
+                    self.writer.add_scalar(tag, param.item(), runner.iter)
+                else:
+                    self.writer.add_histogram(tag, param.view(-1), runner.iter)
+
     @master_only
     def log(self, runner):
         if "plot_buffer" in runner.log_buffer.output:
@@ -179,6 +197,8 @@ class EnhancedTBLoggerHook(TensorboardLoggerHook):
                     self.plot_layerwise_cos_dist(plot_data, plot_name, runner)
                 elif method == "multi_loss_cosine":
                     self.plot_multi_loss_cos_dist(plot_data, runner)
+                elif method == "naive_plot_param":
+                    self.naive_plot_param(plot_data, runner)
                 else:
                     raise RuntimeError(f"Invalid plot method {method}")
             plot_buf.clear()

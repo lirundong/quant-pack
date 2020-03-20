@@ -1,0 +1,115 @@
+__BASE__: configs/baselines/resnet20_cifar10.yaml
+
+wrapper:
+  name: ParametrizedQuantWrapper
+  args:
+    quant_conf:
+      method: linear
+      bit_width: 5
+      align_zero: false
+    do_fold_bn: false
+    fp_layers:
+      - ((module|model).)*conv1
+      - ((module|model).)*fc
+
+train:
+  ckpt_interval: null
+  optim_groups:
+    - name: &n_q quant_params
+      matches:
+        - .*(_lb|_ub)$
+      optim_type: Adam
+      args:
+        lr: !!float 4e-4
+        weight_decay: 0.0
+    - name: &n_w weight_params
+      matches:
+        - .*
+      optim_type: SGD
+      args:
+        lr: 0.1
+        momentum: 0.9
+        weight_decay: !!float 1e-4
+        nesterov: true
+  metrics:
+    - name: TopK
+      args:
+        logits_names:
+          - fp
+          - quant
+        topk: [1, 5]
+  qat_policies:
+    - name: SetupQuantOnce
+      args:
+        quant_mode:
+          - quant
+          - fp
+        calibrate_cfg:
+          name: calibration
+          type: ActivationCalibration
+          args:
+            percentile: 0.99
+    - name: ConstantVariable
+      args:
+        name: ce_loss_weight
+        value: 1.0
+    - name: ConstantVariable
+      args:
+        name: kl_loss_weight
+        value: 1.0
+    - name: ConstantVariable
+      args:
+        name: kl_temperature
+        value: 1.0
+    - name: OptimAlterStep
+      args:
+        apply_to:
+          - *n_w
+          - *n_q
+        alter_freq: -1  # tune W and Theta in parallel
+        intervals:
+          - [0, -1]
+    - name: RAMBufferedCheckpoint
+      args:
+        criterion: quant_top1_eval_acc
+        interval: 10
+
+runtime_hooks:
+  interval: 100
+  hooks:
+    - name: &c4_param get_conv4_param
+      type: CollectLayerParam
+      args:
+        need_reg: true
+        layers:
+          ((module|model).)*layer3.2.conv2: ["a_lb", "a_ub", "w_lb", "w_ub",
+                                             "_running_mean_fp", "_running_var_fp",
+                                             "_running_mean_q", "_running_var_q"]
+        inject_at_mode: quant
+  post_process:
+    - name: conv4_param_plot
+      type: ParamPassThrough
+      args:
+        apply_to: *c4_param
+
+eval:
+  metrics:
+    - name: EvalTopK
+      args:
+        logits_names:
+          - fp
+          - quant
+        topk: [1, 5]
+  quant_mode:
+    - fp
+    - quant
+
+log:
+  interval: 100
+  hooks:
+    - type: EnhancedTBLoggerHook
+    - type: TextLoggerHook
+
+work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-resursive-init/w5a5
+resume: null
+fresh_resume: /home/lirundong/HDD1/Experiments/resnet20-cifar10/epoch_200.pth

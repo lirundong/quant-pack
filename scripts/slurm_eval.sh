@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-set -x
+set -xe
 
 if ! [[ $1 =~ .*.yaml ]]; then
   CONF="${1}.yaml"

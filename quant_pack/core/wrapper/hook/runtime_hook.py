@@ -9,8 +9,10 @@ from .activation_builder import SaveActivationBuilder, SaveAllValueBuilder
 from .manual_bias_correction_builder import ManualBiasCorrectionBuilder
 from .calibration_builder import ActivationCalibrationBuilder
 from .gradient_builder import HijackGradientBuilder, HijackTensorGradientBuilder
+from .param_builder import CollectLayerParamBuilder
 from .activation_post_process import CosineDistancePostProcess, RelativeErrorPostProcess
 from .gradient_post_process import MultiLossGradDist
+from .param_post_process import ParamPassThrough
 
 # TODO: refactor these registries to class decorators
 BUILDERS = {
@@ -20,12 +22,14 @@ BUILDERS = {
     ActivationCalibrationBuilder.__name__: ActivationCalibrationBuilder,
     HijackGradientBuilder.__name__: HijackGradientBuilder,
     HijackTensorGradientBuilder.__name__: HijackTensorGradientBuilder,
+    CollectLayerParamBuilder.__name__: CollectLayerParamBuilder,
 }
 
 POST_PROCESS = {
     CosineDistancePostProcess.__name__: CosineDistancePostProcess,
     RelativeErrorPostProcess.__name__: RelativeErrorPostProcess,
     MultiLossGradDist.__name__: MultiLossGradDist,
+    ParamPassThrough.__name__: ParamPassThrough,
 }
 
 

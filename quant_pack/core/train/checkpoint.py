@@ -78,3 +78,7 @@ class RAMBufferedCheckpointHook(Hook):
             self.best_ckpt = f
         if self.every_n_epochs(runner, self.interval):
             self.write_to_disk()
+
+    @master_only
+    def after_run(self, runner):
+        self.write_to_disk()

@@ -1,0 +1,10 @@
+__BASE__: configs/GQ_Nets/resnet20_cifar10_recursive_init/w5a5.yaml
+
+wrapper:
+  name: ParametrizedQuantWrapper
+  args:
+    quant_conf:
+      bit_width: 3
+
+work_dir: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-resursive-init/w3a3
+fresh_resume: /home/lirundong/HDD1/Experiments/GQ-Nets/resnet20-cifar10-resursive-init/w4a4/ckpt_best.pth

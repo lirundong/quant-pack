@@ -9,6 +9,8 @@ from .base_builder import HookBuilder
 
 class ActivationCalibrationBuilder(HookBuilder):
 
+    EPS = 1e-2
+
     def __init__(self, hook_reg, enable_reg, percentile=0.99):
         super(ActivationCalibrationBuilder, self).__init__("forward", hook_reg, enable_reg)
         self.percentile = percentile
@@ -31,6 +33,7 @@ class ActivationCalibrationBuilder(HookBuilder):
             ub, lb = bounds
         else:
             ub, lb = input[k], input[n - k]
+        ub = torch.max(lb + self.EPS, ub)
         assert lb < ub, f"invalid calibration bounds: lb={lb.item():.5f}, ub={ub.item():.5f}"
         module.a_lb.copy_(lb)
         module.a_ub.copy_(ub)
